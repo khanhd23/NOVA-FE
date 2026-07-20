@@ -16,10 +16,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nova.app.ui.theme.*
-import kotlinx.coroutines.delay
 
 @Composable
-fun SplashScreen(onTimeout: () -> Unit) {
+fun SplashScreen() {
     val scale = remember { Animatable(0f) }
     
     LaunchedEffect(Unit) {
@@ -30,8 +29,6 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 stiffness = Spring.StiffnessLow
             )
         )
-        delay(2000)
-        onTimeout()
     }
 
     Box(
@@ -138,7 +135,7 @@ data class OnboardingData(val title: String, val description: String, val color:
 @Composable
 fun SplashScreenPreview() {
     NOVATheme {
-        SplashScreen {}
+        SplashScreen()
     }
 }
 

@@ -19,7 +19,10 @@ import com.nova.app.core.ui.NovaButton
 import com.nova.app.ui.theme.*
 
 @Composable
-fun LoginScreen(onLoginSuccess: () -> Unit) {
+fun LoginScreen(
+    onGoogleLogin: () -> Unit,
+    onFacebookLogin: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -49,7 +52,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             
             NovaButton(
                 text = "Sign in with Google",
-                onClick = onLoginSuccess,
+                onClick = onGoogleLogin,
                 containerColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f),
                 icon = Icons.Default.AccountCircle
             )
@@ -58,7 +61,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             
             NovaButton(
                 text = "Sign in with Facebook",
-                onClick = onLoginSuccess,
+                onClick = onFacebookLogin,
                 containerColor = Color(0xFF1877F2),
                 icon = Icons.Default.Facebook
             )

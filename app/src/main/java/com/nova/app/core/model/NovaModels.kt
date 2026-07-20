@@ -39,6 +39,17 @@ data class UserCard(
     val distanceKm: Int? = null,
     val online: Boolean = false,
     val city: String = "",
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val premium: Boolean = false,
+    val followersCount: Int = 0,
+    val followingCount: Int = 0,
+    val friendsCount: Int = 0,
+    val followedByMe: Boolean = false,
+    val followedByThem: Boolean = false,
+    val friend: Boolean = false,
+    val gender: String = "Not specified",
+    val publicId: String = "",
 )
 
 @Immutable
@@ -117,15 +128,40 @@ data class FeedPost(
 @Immutable
 data class ChatMessage(
     val id: String,
-    val text: String,
+    val text: String = "",
     val sentByMe: Boolean,
     val timeLabel: String,
     val isVoice: Boolean = false,
     val isGif: Boolean = false,
     val isSticker: Boolean = false,
+    val attachmentKind: ChatAttachmentKind? = null,
+    val attachmentUrl: String? = null,
+    val attachmentPreviewUrl: String? = null,
+    val attachmentMimeType: String? = null,
+    val attachmentName: String? = null,
+    val attachmentDurationSeconds: Int? = null,
     val translatedText: String? = null,
     val isRead: Boolean = false,
-)
+    val callSummary: CallSummaryUiState? = null,
+) {
+    val isCallLog: Boolean
+        get() = callSummary != null
+
+    val hasAttachment: Boolean
+        get() = attachmentKind != null
+
+    val isImageAttachment: Boolean
+        get() = attachmentKind == ChatAttachmentKind.Image
+
+    val isVideoAttachment: Boolean
+        get() = attachmentKind == ChatAttachmentKind.Video
+
+    val isAudioAttachment: Boolean
+        get() = attachmentKind == ChatAttachmentKind.Audio || isVoice
+
+    val isFileAttachment: Boolean
+        get() = attachmentKind == ChatAttachmentKind.File
+}
 
 @Immutable
 data class ChatThread(
@@ -156,11 +192,46 @@ data class CommunityPost(
     val id: String,
     val topic: String,
     val author: UserCard,
+    val postType: String = "TEXT",
     val text: String,
     val mediaUrl: String? = null,
+    val mediaUrls: List<String> = emptyList(),
+    val thumbnailUrl: String? = null,
+    val tags: List<String> = emptyList(),
+    val mentionedUserIds: List<String> = emptyList(),
     val likes: Int,
     val comments: Int,
+    val commentsPreview: List<CommunityComment> = emptyList(),
+    val shares: Int = 0,
+    val likedByMe: Boolean = false,
+    val sharedByMe: Boolean = false,
     val timeLabel: String,
+) {
+    val allMediaUrls: List<String>
+        get() = (if (mediaUrls.isNotEmpty()) mediaUrls else mediaUrl?.let { listOf(it) } ?: emptyList()).normalizedPostMediaUrls()
+
+    val hasVideoMedia: Boolean
+        get() = postType.equals("VIDEO", ignoreCase = true) || allMediaUrls.hasVideoMedia()
+
+    val hasImageMedia: Boolean
+        get() = allMediaUrls.hasImageMedia()
+
+    val hasMixedMedia: Boolean
+        get() = allMediaUrls.hasMixedMedia()
+
+    val hasMultipleMedia: Boolean
+        get() = allMediaUrls.size > 1
+}
+
+@Immutable
+data class CommunityComment(
+    val id: String,
+    val postId: String,
+    val author: UserCard,
+    val text: String,
+    val timeLabel: String,
+    val mine: Boolean = false,
+    val mentionedUserIds: List<String> = emptyList(),
 )
 
 @Immutable
@@ -237,6 +308,96 @@ data class NotificationItem(
     val timeLabel: String,
     val type: String,
     val unread: Boolean,
+    val actionTarget: String? = null,
+    val threadId: String? = null,
+)
+
+@Immutable
+data class SearchResultItem(
+    val id: String,
+    val name: String,
+    val gender: String,
+    val interests: List<String>,
+    val avatarUrl: String,
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val premium: Boolean = false,
+    val verified: Boolean = false,
+    val city: String = "",
+    val distanceKm: Int? = null,
+    val online: Boolean = false,
+    val publicId: String = "",
+)
+
+@Immutable
+data class SearchUiState(
+    val query: String = "",
+    val selectedGender: String = "All",
+    val loading: Boolean = false,
+    val results: List<SearchResultItem> = emptyList(),
+    val page: Int = 0,
+    val size: Int = 20,
+    val total: Long = 0,
+    val hasMore: Boolean = false,
+    val error: String? = null,
+)
+
+@Immutable
+data class NotificationsUiState(
+    val items: List<NotificationItem> = emptyList(),
+    val unreadCount: Int = 0,
+    val loading: Boolean = false,
+)
+
+@Immutable
+data class ProfileConnectionItem(
+    val id: String,
+    val name: String,
+    val username: String,
+    val avatarUrl: String,
+    val gender: String,
+    val interests: List<String>,
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val premium: Boolean = false,
+    val verified: Boolean = false,
+    val city: String = "",
+    val followersCount: Int = 0,
+    val followingCount: Int = 0,
+    val friendsCount: Int = 0,
+    val followedByMe: Boolean = false,
+    val followedByThem: Boolean = false,
+    val friend: Boolean = false,
+)
+
+@Immutable
+data class ProfileConnectionsUiState(
+    val userId: String = "",
+    val userName: String = "",
+    val avatarUrl: String = "",
+    val bio: String = "",
+    val city: String = "",
+    val verified: Boolean = false,
+    val online: Boolean = false,
+    val premium: Boolean = false,
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val followersCount: Int = 0,
+    val followingCount: Int = 0,
+    val friendsCount: Int = 0,
+    val interests: List<String> = emptyList(),
+    val isSelf: Boolean = false,
+    val selectedTab: String = "followers",
+    val tabs: List<String> = listOf("followers", "friends", "following"),
+    val items: List<ProfileConnectionItem> = emptyList(),
+    val page: Int = 0,
+    val size: Int = 50,
+    val total: Long = 0,
+    val hasMore: Boolean = false,
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val profileLoaded: Boolean = false,
 )
 
 @Immutable
@@ -287,6 +448,10 @@ data class ChatUiState(
     val suggestions: List<String>,
     val translationEnabled: Boolean,
     val callHint: String,
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val hasMore: Boolean = false,
+    val nextCursor: String? = null,
 )
 
 @Immutable
@@ -295,12 +460,35 @@ data class CommunityUiState(
     val posts: List<CommunityPost>,
     val events: List<EventItem>,
     val trending: List<String>,
+    val selectedTab: String = "for_you",
+    val loading: Boolean = false,
+    val refreshing: Boolean = false,
+    val hasMore: Boolean = false,
+    val nextCursor: String? = null,
+    val refreshToken: String = "",
+    val postTypes: List<String> = listOf("TEXT", "IMAGE", "VIDEO", "MIXED", "VOICE", "LINK", "POLL"),
+)
+
+@Immutable
+data class CreatePostDraft(
+    val topicId: String,
+    val text: String,
+    val postType: String = "TEXT",
+    val mediaUrl: String? = null,
+    val mediaUrls: List<String> = emptyList(),
+    val thumbnailUrl: String? = null,
+    val tags: List<String> = emptyList(),
+    val mentionedUserIds: List<String> = emptyList(),
 )
 
 @Immutable
 data class ProfileUiState(
     val user: UserCard,
     val bio: String,
+    val featuredPhotos: List<String> = emptyList(),
+    val interests: List<String> = emptyList(),
+    val posts: List<CommunityPost> = emptyList(),
+    val diamonds: Int = 100,
     val prompts: List<String>,
     val badges: List<BadgeItem>,
     val stats: List<StatCard>,

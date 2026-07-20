@@ -26,7 +26,8 @@ import com.nova.app.ui.theme.PurpleMain
 fun SettingsScreen(
     isDarkMode: Boolean,
     onDarkModeToggle: (Boolean) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onLogout: () -> Unit,
 ) {
     var screenState by remember { mutableStateOf<SettingsSubScreen>(SettingsSubScreen.Main) }
     var currentLanguage by remember { mutableStateOf("English") }
@@ -38,7 +39,8 @@ fun SettingsScreen(
                 currentLanguage = currentLanguage,
                 onBack = onBack,
                 onNavigate = { screenState = it },
-                onDarkModeToggle = onDarkModeToggle
+                onDarkModeToggle = onDarkModeToggle,
+                onLogout = onLogout,
             )
             SettingsSubScreen.Privacy -> PrivacySettings(onBack = { screenState = SettingsSubScreen.Main })
             SettingsSubScreen.Language -> LanguageSettings(
@@ -61,7 +63,8 @@ fun MainSettings(
     currentLanguage: String,
     onBack: () -> Unit,
     onNavigate: (SettingsSubScreen) -> Unit,
-    onDarkModeToggle: (Boolean) -> Unit
+    onDarkModeToggle: (Boolean) -> Unit,
+    onLogout: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         NovaTopBar(title = "Settings", onBack = onBack)
@@ -95,7 +98,7 @@ fun MainSettings(
                 SettingsItem(title = "Help & Feedback", icon = Icons.Default.HelpCenter, onClick = {})
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 
-                SettingsItem(title = "Logout", icon = Icons.AutoMirrored.Filled.Logout, color = Color.Red, onClick = {})
+                SettingsItem(title = "Logout", icon = Icons.AutoMirrored.Filled.Logout, color = Color.Red, onClick = onLogout)
             }
         }
     }

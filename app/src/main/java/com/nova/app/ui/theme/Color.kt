@@ -1,31 +1,32 @@
 package com.nova.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import com.nova.app.core.designsystem.NovaPalette
 
 // Primary Gradient (Constant for both themes)
-val PurpleMain = Color(0xFF8B5CF6)
-val PurpleMedium = Color(0xFFA855F7)
-val PurplePink = Color(0xFFD946EF)
+val PurpleMain = NovaPalette.Purple50
+val PurpleMedium = NovaPalette.Purple60
+val PurplePink = NovaPalette.Purple70
 
 // Accent & Functional
-val AccentPink = Color(0xFFFF4D9D)
-val SuccessGreen = Color(0xFF22C55E)
-val WarningOrange = Color(0xFFF59E0B)
+val AccentPink = NovaPalette.AccentPink
+val SuccessGreen = NovaPalette.Success
+val WarningOrange = NovaPalette.Warning
 
 // --- DARK THEME RAW COLORS ---
-val BgDark = Color(0xFF09090B)
-val BgCardDark = Color(0xFF1A1A27)
-val SurfaceVariantDark = Color(0xFF161622)
-val BorderDark = Color(0x14FFFFFF)
+val BgDark = NovaPalette.Background
+val BgCardDark = NovaPalette.Card
+val SurfaceVariantDark = NovaPalette.BackgroundAlt2
+val BorderDark = NovaPalette.Border
 val GlassDark = Color(0x0AFFFFFF)
-val TextPrimaryDark = Color.White
-val TextSecondaryDark = Color.Gray
+val TextPrimaryDark = NovaPalette.TextPrimary
+val TextSecondaryDark = NovaPalette.TextSecondary
 
 // --- LIGHT THEME RAW COLORS ---
-val BgLight = Color(0xFFF9FAFB)
-val BgCardLight = Color(0xFFFFFFFF)
-val SurfaceVariantLight = Color(0xFFF3F4F6)
-val BorderLight = Color(0x14000000)
+val BgLight = NovaPalette.LightBackground
+val BgCardLight = NovaPalette.LightCardAlt
+val SurfaceVariantLight = NovaPalette.LightCard
+val BorderLight = NovaPalette.LightBorder
 val GlassLight = Color(0x14000000)
-val TextPrimaryLight = Color(0xFF09090B)
-val TextSecondaryLight = Color(0xFF6B7280)
+val TextPrimaryLight = NovaPalette.LightTextPrimary
+val TextSecondaryLight = NovaPalette.LightTextSecondary

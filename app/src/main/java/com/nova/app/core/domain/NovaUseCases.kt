@@ -9,6 +9,8 @@ import com.nova.app.core.model.HomeUiState
 import com.nova.app.core.model.MessagesUiState
 import com.nova.app.core.model.ProfileUiState
 import com.nova.app.core.model.SessionState
+import com.nova.app.core.model.ChatAttachmentDraft
+import com.nova.app.core.backend.BackendProfileUpdateRequest
 import kotlinx.coroutines.flow.StateFlow
 
 class ObserveSessionUseCase(private val repository: NovaRepository) {
@@ -75,6 +77,14 @@ class ToggleTravelModeUseCase(private val repository: NovaRepository) {
     suspend operator fun invoke() = repository.toggleTravelMode()
 }
 
+class RefreshProfileUseCase(private val repository: NovaRepository) {
+    suspend operator fun invoke() = repository.refreshProfile()
+}
+
+class UpdateProfileUseCase(private val repository: NovaRepository) {
+    suspend operator fun invoke(request: BackendProfileUpdateRequest) = repository.updateProfile(request)
+}
+
 class LikeCandidateUseCase(private val repository: NovaRepository) {
     suspend operator fun invoke() = repository.likeCandidate()
 }
@@ -92,7 +102,7 @@ class SaveCandidateUseCase(private val repository: NovaRepository) {
 }
 
 class SendMessageUseCase(private val repository: NovaRepository) {
-    suspend operator fun invoke(text: String) = repository.sendMessage(text)
+    suspend operator fun invoke(text: String, attachment: ChatAttachmentDraft? = null) = repository.sendMessage(text, attachment)
 }
 
 class ToggleTopicUseCase(private val repository: NovaRepository) {
@@ -101,4 +111,8 @@ class ToggleTopicUseCase(private val repository: NovaRepository) {
 
 class JoinEventUseCase(private val repository: NovaRepository) {
     suspend operator fun invoke(eventId: String) = repository.joinEvent(eventId)
+}
+
+class LogoutUseCase(private val repository: NovaRepository) {
+    suspend operator fun invoke() = repository.logout()
 }

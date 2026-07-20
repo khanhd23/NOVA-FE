@@ -1,241 +1,349 @@
-package com.nova.app.core.ui
+﻿package com.nova.app.core.ui
 
-import androidx.compose.animation.*
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.nova.app.ui.theme.*
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import coil3.compose.AsyncImage
+import com.nova.app.core.model.PostMediaKind
+import com.nova.app.core.model.detectPostMediaKind
+import com.nova.app.core.model.normalizedPostMediaUrls
 
 @Composable
 fun NovaVideoView(
     url: String,
-    autoPlayOnWifi: Boolean = true,
-    isOnWifi: Boolean = true,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit = {}
+    autoPlay: Boolean = false,
+    showControls: Boolean = true,
+    onClick: () -> Unit = {},
 ) {
-    var isPlaying by remember { mutableStateOf(autoPlayOnWifi && isOnWifi) }
-    
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(Uri.parse(url)))
+            prepare()
+            playWhenReady = autoPlay
+        }
+    }
+
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.DarkGray)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.Black)
             .clickable { onClick() }
     ) {
-        // Placeholder for actual video surface
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = Icons.Default.PlayArrow, 
-                contentDescription = null, 
-                modifier = Modifier.size(48.dp), 
-                tint = Color.White.copy(alpha = 0.5f)
-            )
-        }
-
-        // Mute Indicator
-        Icon(
-            imageVector = Icons.Default.VolumeOff,
-            contentDescription = "Muted",
-            tint = Color.White,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(12.dp)
-                .size(20.dp)
+        AndroidView(
+            factory = { viewContext ->
+                PlayerView(viewContext).apply {
+                    this.player = player
+                    useController = showControls
+                    controllerShowTimeoutMs = 2500
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                }
+            },
+            update = { playerView ->
+                playerView.player = player
+                playerView.useController = showControls
+            },
+            modifier = Modifier.fillMaxSize()
         )
-        
-        if (!isPlaying) {
+
+        if (!showControls) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                IconButton(onClick = { isPlaying = true }) {
-                    Icon(Icons.Default.PlayCircleFilled, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(64.dp))
-                }
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.75f),
+                    modifier = Modifier.size(52.dp)
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PostMediaPreview(
+    mediaUrls: List<String>,
+    thumbnailUrl: String? = null,
+    modifier: Modifier = Modifier,
+    onOpen: (Int) -> Unit,
+) {
+    val safeMediaUrls = remember(mediaUrls) { mediaUrls.normalizedPostMediaUrls() }
+    if (safeMediaUrls.isEmpty()) return
+
+    val mediaKinds = remember(safeMediaUrls) { safeMediaUrls.map { it.detectPostMediaKind() } }
+    val shape = RoundedCornerShape(22.dp)
+
+    if (safeMediaUrls.size == 1) {
+        PostMediaTile(
+            mediaUrl = safeMediaUrls.first(),
+            kind = mediaKinds.firstOrNull() ?: PostMediaKind.UNKNOWN,
+            thumbnailUrl = thumbnailUrl,
+            modifier = modifier
+                .fillMaxWidth()
+                .height(244.dp)
+                .clip(shape)
+                .clickable { onOpen(0) }
+        )
+        return
+    }
+
+    val pagerState = rememberPagerState(pageCount = { safeMediaUrls.size })
+
+    Column(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .clip(shape)
+        ) {
+            HorizontalPager(state = pagerState) { page ->
+                PostMediaTile(
+                    mediaUrl = safeMediaUrls[page],
+                    kind = mediaKinds.getOrNull(page) ?: PostMediaKind.UNKNOWN,
+                    thumbnailUrl = thumbnailUrl,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { onOpen(page) }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    text = "${pagerState.currentPage + 1}/${safeMediaUrls.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            repeat(safeMediaUrls.size) { index ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 3.dp)
+                        .size(if (pagerState.currentPage == index) 8.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(if (pagerState.currentPage == index) Color.White else Color.White.copy(alpha = 0.3f))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PostMediaTile(
+    mediaUrl: String,
+    kind: PostMediaKind,
+    thumbnailUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.background(Color.Black)
+    ) {
+        when (kind) {
+            PostMediaKind.VIDEO -> {
+                val poster = thumbnailUrl?.takeIf { it.isNotBlank() } ?: mediaUrl
+                AsyncImage(
+                    model = poster,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(38.dp)
+                        )
+                    }
+                }
+            }
+            else -> {
+                AsyncImage(
+                    model = mediaUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun MediaViewer(
-    mediaUrl: String,
-    isVideo: Boolean,
-    onDismiss: () -> Unit
+    mediaUrls: List<String>,
+    startIndex: Int = 0,
+    onDismiss: () -> Unit,
 ) {
-    var isPlaying by remember { mutableStateOf(true) }
-    var playbackSpeed by remember { mutableStateOf(1.0f) }
-    var quality by remember { mutableStateOf("1080p") }
-    var progress by remember { mutableStateOf(0.3f) }
-    var isMuted by remember { mutableStateOf(false) }
-    var showControls by remember { mutableStateOf(true) }
+    val safeMediaUrls = remember(mediaUrls) { mediaUrls.normalizedPostMediaUrls() }
+    val initialIndex = startIndex.coerceIn(0, (safeMediaUrls.size - 1).coerceAtLeast(0))
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex,
+        pageCount = { safeMediaUrls.size.coerceAtLeast(1) }
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable { showControls = !showControls }
     ) {
-        // Main Media (Image or Video Placeholder)
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (isVideo) {
-                Icon(Icons.Default.Movie, contentDescription = null, modifier = Modifier.size(120.dp), tint = Color.DarkGray)
-            } else {
-                Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(120.dp), tint = Color.DarkGray)
+        if (safeMediaUrls.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No media", color = Color.White.copy(alpha = 0.7f))
             }
-        }
-
-        // Top Controls
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onDismiss, modifier = Modifier.background(Color.Black.copy(0.4f), CircleShape)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                }
-                
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { /* Handle download */ }, modifier = Modifier.background(Color.Black.copy(0.4f), CircleShape)) {
-                        Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    IconButton(onClick = { /* Handle share */ }, modifier = Modifier.background(Color.Black.copy(0.4f), CircleShape)) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
-                    }
-                }
-            }
-        }
-
-        // Bottom Controls (Only for Video)
-        if (isVideo) {
-            AnimatedVisibility(
-                visible = showControls,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(bottom = 32.dp, top = 16.dp)
-                        .padding(horizontal = 16.dp)
-                ) {
-                    // Seek Bar
-                    Slider(
-                        value = progress,
-                        onValueChange = { progress = it },
-                        colors = SliderDefaults.colors(
-                            thumbColor = PurpleMain,
-                            activeTrackColor = PurpleMain,
-                            inactiveTrackColor = Color.Gray
-                        )
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (safeMediaUrls[page].detectPostMediaKind()) {
+                    PostMediaKind.VIDEO -> NovaVideoView(
+                        url = safeMediaUrls[page],
+                        modifier = Modifier.fillMaxSize(),
+                        autoPlay = pagerState.currentPage == page,
+                        showControls = true
                     )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Play/Pause & Time
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { isPlaying = !isPlaying }) {
-                                Icon(
-                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                            Text("0:42 / 2:15", color = Color.White, fontSize = 12.sp)
-                        }
-                        
-                        // Settings (Speed, Quality, Mute)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { 
-                                playbackSpeed = when(playbackSpeed) {
-                                    1.0f -> 1.5f
-                                    1.5f -> 2.0f
-                                    else -> 1.0f
-                                }
-                            }) {
-                                Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                            
-                            TextButton(onClick = { 
-                                quality = when(quality) {
-                                    "1080p" -> "720p"
-                                    "720p" -> "480p"
-                                    else -> "1080p"
-                                }
-                            }) {
-                                Text(quality, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                            
-                            IconButton(onClick = { isMuted = !isMuted }) {
-                                Icon(
-                                    if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                    contentDescription = null,
-                                    tint = Color.White
-                                )
-                            }
-                        }
+                    else -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        AsyncImage(
+                            model = safeMediaUrls[page],
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
                     }
                 }
             }
         }
-    }
-}
 
-@Preview
-@Composable
-fun VideoViewPreview() {
-    NOVATheme {
-        NovaVideoView(
-            url = "",
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
-                .padding(16.dp)
-        )
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+
+            if (safeMediaUrls.size > 1) {
+                Text(
+                    text = "${pagerState.currentPage + 1}/${safeMediaUrls.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+
+        if (safeMediaUrls.size > 1) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                repeat(safeMediaUrls.size) { index ->
+                    val selected = pagerState.currentPage == index
+                    Box(
+                        modifier = Modifier
+                            .size(if (selected) 9.dp else 7.dp)
+                            .clip(CircleShape)
+                            .background(if (selected) Color.White else Color.White.copy(alpha = 0.35f))
+                    )
+                }
+            }
+        }
     }
 }
 
-@Preview
 @Composable
-fun MediaViewerPreview() {
-    NOVATheme {
-        MediaViewer(
-            mediaUrl = "",
-            isVideo = true,
-            onDismiss = {}
-        )
-    }
+@Deprecated("Use the version without isVideo. Mixed media pages are now detected per item.")
+fun MediaViewer(
+    mediaUrls: List<String>,
+    isVideo: Boolean,
+    startIndex: Int = 0,
+    onDismiss: () -> Unit,
+) {
+    MediaViewer(
+        mediaUrls = mediaUrls,
+        startIndex = startIndex,
+        onDismiss = onDismiss
+    )
 }

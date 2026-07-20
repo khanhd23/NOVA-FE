@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "655774214440",
+    "project_id": "nova-68c91",
+    "storage_bucket": "nova-68c91.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:655774214440:android:ab29164fe07dc742b7881d",
+        "android_client_info": {
+          "package_name": "com.nova.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "655774214440-bpuclf0s2o8liqdpkc8qlqma7pmu7j61.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nova.app",
+            "certificate_hash": "b8bcab3a4d58066a8723802eebbb85d6613035e5"
+          }
+        },
+        {
+          "client_id": "655774214440-31qsc49ov49bemf24c1uoqunenebto31.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDomeqsiYy0kQH9DRvb92-_xeynyMuBpJA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "655774214440-31qsc49ov49bemf24c1uoqunenebto31.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
