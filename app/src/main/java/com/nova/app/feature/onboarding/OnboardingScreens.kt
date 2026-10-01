@@ -1,5 +1,10 @@
 package com.nova.app.feature.onboarding
 
+import com.nova.app.core.designsystem.NovaBrand
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -48,14 +53,14 @@ fun SplashScreen() {
                     fontSize = 64.sp,
                     fontWeight = FontWeight.Black,
                     brush = Brush.linearGradient(
-                        colors = listOf(PurpleMain, PurplePink)
+                        colors = NovaBrand.gradient
                     )
                 ),
                 modifier = Modifier.scale(scale.value)
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Connect by Emotion",
+                text = stringResource(R.string.login_tagline),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     letterSpacing = 2.sp
@@ -70,9 +75,9 @@ fun OnboardingScreen(onFinish: () -> Unit) {
     // Basic onboarding for now, can be expanded to 4-6 pages
     var currentPage by remember { mutableStateOf(0) }
     val pages = listOf(
-        OnboardingData("AI Matching", "Discover your soulmate with advanced AI analysis.", PurpleMain),
-        OnboardingData("Video Date", "Connect deeper with high-quality video calls.", PurpleMedium),
-        OnboardingData("Community", "Join groups that share your passions.", PurplePink)
+        OnboardingData(stringResource(R.string.onb_ai_title), stringResource(R.string.onb_ai_desc), PurpleMain),
+        OnboardingData(stringResource(R.string.onb_video_title), stringResource(R.string.onb_video_desc), PurpleMedium),
+        OnboardingData(stringResource(R.string.onb_community_title), stringResource(R.string.onb_community_desc), PurplePink)
     )
 
     Box(
@@ -114,7 +119,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         }
 
         com.nova.app.core.ui.NovaButton(
-            text = if (currentPage < pages.size - 1) "Next" else "Get Started",
+            text = if (currentPage < pages.size - 1) stringResource(R.string.onb_next) else stringResource(R.string.onb_get_started),
             onClick = {
                 if (currentPage < pages.size - 1) {
                     currentPage++
