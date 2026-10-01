@@ -1,5 +1,7 @@
 package com.nova.app.core.navigation
 
+import com.nova.app.core.designsystem.NovaBrand
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.nova.app.core.ui.NovaBadge
@@ -46,29 +50,37 @@ import com.nova.app.feature.post.CreatePostScreen
 import com.nova.app.feature.profile.AccountScreen
 import com.nova.app.core.model.MessagesUiState
 import com.nova.app.core.model.CommunityUiState
+import com.nova.app.core.model.DiscoverUiState
 import com.nova.app.core.model.ProfileUiState
 import com.nova.app.core.state.NovaLoadState
 import com.nova.app.core.viewmodel.CommunityViewModel
+import com.nova.app.core.viewmodel.DiscoverViewModel
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
 
 @Composable
 fun HomeShell(
     messagesState: MessagesUiState,
+    discoverState: NovaLoadState<DiscoverUiState>,
+    discoverViewModel: DiscoverViewModel,
     communityState: NovaLoadState<CommunityUiState>,
     communityViewModel: CommunityViewModel,
     profileState: ProfileUiState,
     notificationCount: Int,
     onChatClick: (com.nova.app.core.model.ChatThread) -> Unit,
     onSearchClick: () -> Unit,
+    onChatTabSeen: () -> Unit = {},
+    onCommunitySearchClick: () -> Unit = onSearchClick,
     onNotificationClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onEditProfile: () -> Unit,
     onOpenProfile: (String) -> Unit = {},
+    onDiscoverLike: (com.nova.app.core.model.DiscoveryCandidate) -> Unit = {},
     onOpenConnections: (String) -> Unit = {},
     onProfilePostLike: (String, Boolean) -> Unit = { _, _ -> },
     onProfilePostComment: (String, String) -> Unit = { _, _ -> },
     onProfilePostShare: (String) -> Unit = {},
+    onPostPublished: () -> Unit = {},
     initialTab: Int = 0,
     modifier: Modifier = Modifier,
 ) {
@@ -79,19 +91,40 @@ fun HomeShell(
 
     var viewerMedia by remember { mutableStateOf<ViewerMediaState?>(null) }
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
-    val messageBadgeCount = messagesState.threads.sumOf { it.unreadCount }
+    val messageBadgeCount = if (selectedTab == 3) 0 else messagesState.threads.sumOf { it.unreadCount }
 
     BackHandler(enabled = viewerMedia != null) {
         viewerMedia = null
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 3) {
+            onChatTabSeen()
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         when (selectedTab) {
-            0 -> DiscoverScreen()
+            0 -> DiscoverScreen(
+                uiState = discoverState,
+                onApplyFilters = discoverViewModel::applyFilters,
+                onSkip = discoverViewModel::skip,
+                onLike = { candidate ->
+                    discoverViewModel.like()
+                    onDiscoverLike(candidate)
+                },
+                onPoke = discoverViewModel::poke,
+                onClearMessage = discoverViewModel::clearMessage,
+            )
             1 -> CommunityScreen(
                 uiState = communityState,
                 communityViewModel = communityViewModel,
                 notificationCount = notificationCount,
+                onSearchClick = onCommunitySearchClick,
                 onNotificationClick = onNotificationClick,
                 onMediaClick = { urls, startIndex -> viewerMedia = ViewerMediaState(urls, startIndex) },
                 onOpenProfile = onOpenProfile,
@@ -99,7 +132,10 @@ fun HomeShell(
             2 -> CreatePostScreen(
                 communityViewModel = communityViewModel,
                 onBack = { selectedTab = 1 },
-                onPublished = { selectedTab = 1 }
+                onPublished = {
+                    onPostPublished()
+                    selectedTab = 1
+                }
             )
             3 -> ChatListScreen(messagesState = messagesState, onSearchClick = onSearchClick, onChatClick = onChatClick)
             4 -> AccountScreen(
@@ -112,6 +148,7 @@ fun HomeShell(
                 onCommentPost = onProfilePostComment,
                 onSharePost = onProfilePostShare,
                 onOpenMedia = { urls, startIndex -> viewerMedia = ViewerMediaState(urls, startIndex) },
+                onOpenProfile = onOpenProfile,
             )
         }
 
@@ -181,7 +218,7 @@ fun NavIcon(
         Modifier
             .size(containerSize)
             .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(PurpleMain, PurplePink)))
+            .background(Brush.linearGradient(NovaBrand.gradient))
     } else {
         Modifier.size(containerSize)
     }
@@ -191,7 +228,7 @@ fun NavIcon(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (isMain) MaterialTheme.colorScheme.onBackground else tint,
+                tint = if (isMain) Color.White else tint,
                 modifier = Modifier.size(iconSize)
             )
             if (badgeCount > 0) {

@@ -18,12 +18,14 @@ sealed interface AppRoute {
     data object ProfileConnections : AppRoute
     data object Messages : AppRoute
     data object Community : AppRoute
+    data object CommunitySearch : AppRoute
     data object Profile : AppRoute
     data object Story : AppRoute
     data object Feed : AppRoute
     data object AICompatibility : AppRoute
     data object MatchSuccess : AppRoute
     data object Chat : AppRoute
+    data object ChatSearch : AppRoute
     data object VoiceCall : AppRoute
     data object VideoCall : AppRoute
     data object CallSummary : AppRoute
@@ -76,12 +78,14 @@ private const val ROUTE_PROFILE_DETAIL = "profile_detail"
 private const val ROUTE_PROFILE_CONNECTIONS = "profile_connections"
 private const val ROUTE_MESSAGES = "messages"
 private const val ROUTE_COMMUNITY = "community"
+private const val ROUTE_COMMUNITY_SEARCH = "community_search"
 private const val ROUTE_PROFILE = "profile"
 private const val ROUTE_STORY = "story"
 private const val ROUTE_FEED = "feed"
 private const val ROUTE_AI_COMPATIBILITY = "ai_compatibility"
 private const val ROUTE_MATCH_SUCCESS = "match_success"
 private const val ROUTE_CHAT = "chat"
+private const val ROUTE_CHAT_SEARCH = "chat_search"
 private const val ROUTE_VOICE_CALL = "voice_call"
 private const val ROUTE_VIDEO_CALL = "video_call"
 private const val ROUTE_CALL_SUMMARY = "call_summary"
@@ -115,12 +119,14 @@ fun AppRoute.routeName(): String = when (this) {
     AppRoute.ProfileConnections -> ROUTE_PROFILE_CONNECTIONS
     AppRoute.Messages -> ROUTE_MESSAGES
     AppRoute.Community -> ROUTE_COMMUNITY
+    AppRoute.CommunitySearch -> ROUTE_COMMUNITY_SEARCH
     AppRoute.Profile -> ROUTE_PROFILE
     AppRoute.Story -> ROUTE_STORY
     AppRoute.Feed -> ROUTE_FEED
     AppRoute.AICompatibility -> ROUTE_AI_COMPATIBILITY
     AppRoute.MatchSuccess -> ROUTE_MATCH_SUCCESS
     AppRoute.Chat -> ROUTE_CHAT
+    AppRoute.ChatSearch -> ROUTE_CHAT_SEARCH
     AppRoute.VoiceCall -> ROUTE_VOICE_CALL
     AppRoute.VideoCall -> ROUTE_VIDEO_CALL
     AppRoute.CallSummary -> ROUTE_CALL_SUMMARY

@@ -1,9 +1,15 @@
 package com.nova.app.core.navigation
 
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+import androidx.compose.ui.platform.LocalResources
+
 import android.content.Intent
 import android.util.Log
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,6 +29,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nova.app.core.backend.ACTION_ANSWER_CALL
+import com.nova.app.core.backend.ACTION_CALL_BACK
+import com.nova.app.core.call.CallSystemRegistry
+import com.nova.app.core.call.CallAudioState
 import com.nova.app.core.backend.ACTION_OPEN_CALL
 import com.nova.app.core.backend.ACTION_OPEN_CHAT
 import com.nova.app.core.backend.ACTION_OPEN_NOTIFICATION_TARGET
@@ -43,6 +52,7 @@ import com.nova.app.core.auth.GoogleIdentityClient
 import com.nova.app.core.backend.toCallNotificationPayload
 import com.nova.app.core.backend.toChatNotificationPayload
 import com.nova.app.core.di.NovaContainer
+import com.nova.app.core.i18n.findActivity
 import com.nova.app.core.model.AppSettings
 import com.nova.app.core.model.ChatThread
 import com.nova.app.core.model.CallSessionUiState
@@ -55,17 +65,23 @@ import com.nova.app.core.viewmodel.MessagesViewModel
 import com.nova.app.core.viewmodel.CallViewModel
 import com.nova.app.core.viewmodel.ChatViewModel
 import com.nova.app.core.viewmodel.FlowViewModel
+import com.nova.app.core.viewmodel.DiscoverViewModel
 import com.nova.app.core.viewmodel.NotificationsViewModel
 import com.nova.app.core.viewmodel.ProfileConnectionsViewModel
 import com.nova.app.core.viewmodel.LaunchViewModel
 import com.nova.app.core.viewmodel.ProfileViewModel
 import com.nova.app.core.viewmodel.SearchViewModel
 import com.nova.app.feature.auth.LoginScreen
+import com.nova.app.feature.auth.SignInProvider
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import com.nova.app.feature.call.CallSummaryScreen
 import com.nova.app.feature.call.FloatingCallWindow
 import com.nova.app.feature.call.VideoCallScreen
 import com.nova.app.feature.call.VoiceCallScreen
 import com.nova.app.feature.chat.ChatDetailScreen
+import com.nova.app.feature.chat.ChatSearchScreen
+import com.nova.app.feature.community.CommunitySearchScreen
 import com.nova.app.feature.notifications.NotificationsScreen
 import com.nova.app.feature.search.SearchScreen
 import com.nova.app.feature.onboarding.OnboardingScreen
@@ -100,6 +116,7 @@ fun NovaNavHost(
     val messagesViewModel: MessagesViewModel = viewModel(factory = container.viewModelFactory)
     val chatViewModel: ChatViewModel = viewModel(factory = container.viewModelFactory)
     val communityViewModel: com.nova.app.core.viewmodel.CommunityViewModel = viewModel(factory = container.viewModelFactory)
+    val discoverViewModel: DiscoverViewModel = viewModel(factory = container.viewModelFactory)
     val profileViewModel: ProfileViewModel = viewModel(factory = container.viewModelFactory)
     val profileConnectionsViewModel: ProfileConnectionsViewModel = viewModel(factory = container.viewModelFactory)
     val searchViewModel: SearchViewModel = viewModel(factory = container.viewModelFactory)
@@ -107,8 +124,14 @@ fun NovaNavHost(
     val launchState by launchViewModel.uiState.collectAsStateWithLifecycle()
     val callState by callViewModel.uiState.collectAsStateWithLifecycle()
     val callSummary by callViewModel.lastSummary.collectAsStateWithLifecycle()
+    val callSystem = CallSystemRegistry.system
+    val callAudioState by (callSystem?.audio?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(CallAudioState()) })
+        .collectAsStateWithLifecycle()
+    val isPictureInPicture by (callSystem?.pictureInPicture ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) })
+        .collectAsStateWithLifecycle()
     val messagesState by messagesViewModel.uiState.collectAsStateWithLifecycle()
     val chatState by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val discoverState by discoverViewModel.uiState.collectAsStateWithLifecycle()
     val communityState by communityViewModel.uiState.collectAsStateWithLifecycle()
     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
     val profileConnectionsState by profileConnectionsViewModel.uiState.collectAsStateWithLifecycle()
@@ -166,7 +189,25 @@ fun NovaNavHost(
             unreadCount = 0,
             online = online,
         )
-        navController.navigateTo(AppRoute.Chat)
+        if (!navController.popBackStack(AppRoute.Chat.routeName(), false)) {
+            navController.navigateTo(AppRoute.Chat)
+        }
+    }
+
+    fun openDiscoverChat(candidate: com.nova.app.core.model.DiscoveryCandidate) {
+        val user = candidate.user
+        openChatThread(
+            threadId = "dm-${user.id}",
+            peerUserId = user.id,
+            participantName = user.name,
+            photoUrl = user.photoUrl,
+            verified = user.verified,
+            online = user.online,
+            city = user.city,
+            vipTierId = user.vipTierId,
+            vipTierName = user.vipTierName,
+            premium = user.premium,
+        )
     }
 
     fun handleNotificationNavigation(notification: NotificationItem) {
@@ -206,15 +247,46 @@ fun NovaNavHost(
     }
 
     fun navigateAfterSignIn(session: com.nova.app.core.backend.BackendSession) {
-        val target = when {
-            !session.onboardingComplete -> AppRoute.Onboarding
-            !session.profileComplete -> AppRoute.ProfileSetup
-            else -> AppRoute.Home
-        }
+        val target = if (!session.profileComplete) AppRoute.ProfileSetup else AppRoute.Home
         if (target == AppRoute.ProfileSetup) {
             profileFlowMode = ProfileFlowMode.Setup
         }
         navController.replaceWith(target, AppRoute.SignIn)
+    }
+
+    LaunchedEffect(callState.callId, callState.status, callState.isActive) {
+        val incomingRinging = callState.isActive && callState.isRinging &&
+            callState.direction == com.nova.app.core.model.CallDirection.Incoming && !callState.isMinimized
+        if (incomingRinging) {
+            val route = callRoute(callState.callType)
+            if (navController.currentDestination?.route != route.routeName()) {
+                navController.navigateTo(route)
+            }
+        }
+    }
+
+    LaunchedEffect(callViewModel) {
+        com.nova.app.core.call.CallActions.expandRequests.collect {
+            val current = callViewModel.uiState.value
+            if (current.isActive) {
+                callViewModel.expand()
+                val route = callRoute(current.callType)
+                if (navController.currentDestination?.route != route.routeName()) {
+                    navController.navigateTo(route)
+                }
+            }
+        }
+    }
+
+    // Refresh token rejected (expired or revoked): clean up like a logout and ask to sign in again.
+    LaunchedEffect(container.backendRuntime) {
+        container.backendRuntime.sessionExpired.collect {
+            callViewModel.resetForLogout()
+            selectedChatThread = null
+            flowViewModel.logout()
+            android.widget.Toast.makeText(context, context.getString(R.string.session_expired), android.widget.Toast.LENGTH_LONG).show()
+            navController.replaceAllWith(AppRoute.SignIn)
+        }
     }
 
     LaunchedEffect(callViewModel) {
@@ -240,6 +312,15 @@ fun NovaNavHost(
                 intent.toCallNotificationPayload()?.let { payload ->
                     selectedChatThread = payload.toChatThread(selectedChatThread)
                     startCallFromNotification(callViewModel, navController, payload, intent.action == ACTION_ANSWER_CALL)
+                }
+            }
+            ACTION_CALL_BACK -> {
+                intent.toCallNotificationPayload()?.let { payload ->
+                    selectedChatThread = payload.toChatThread(selectedChatThread)
+                    if (!callViewModel.uiState.value.isActive) {
+                        // The call route starts an outgoing call to the selected thread.
+                        navController.navigateTo(callRoute(payload.callType))
+                    }
                 }
             }
             ACTION_OPEN_PROFILE -> {
@@ -287,7 +368,11 @@ fun NovaNavHost(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         NavHost(
             navController = navController,
             startDestination = AppRoute.Splash.routeName(),
@@ -311,27 +396,50 @@ fun NovaNavHost(
             }
 
             composable(AppRoute.SignIn.routeName()) {
+                var signInProvider by remember { mutableStateOf<SignInProvider?>(null) }
+                var signInError by remember { mutableStateOf<String?>(null) }
+                val res = LocalResources.current
+
+                fun onSignInFailed(throwable: Throwable) {
+                    Log.w("NovaNav", "Sign-in failed", throwable)
+                    signInProvider = null
+                    signInError = res.getString(R.string.login_error_generic)
+                }
+
                 LoginScreen(
+                    loadingProvider = signInProvider,
+                    errorMessage = signInError,
                     onGoogleLogin = {
+                        if (signInProvider != null) return@LoginScreen
+                        signInProvider = SignInProvider.Google
+                        signInError = null
                         scope.launch {
-                            runCatching { googleIdentityClient.getIdToken(context) }
+                            runCatching { googleIdentityClient.getIdToken(context.findActivity() ?: context) }
                                 .onSuccess { idToken ->
                                     flowViewModel.signInWithGoogle(
                                         idToken = idToken,
                                         onSuccess = ::navigateAfterSignIn,
-                                        onError = { throwable ->
-                                            Log.w("NovaNav", "Google backend sign-in failed", throwable)
-                                        }
+                                        onError = ::onSignInFailed,
                                     )
                                 }
                                 .onFailure { throwable ->
                                     Log.w("NovaNav", "Google credential retrieval failed", throwable)
+                                    signInProvider = null
+                                    signInError = when (throwable) {
+                                        is GetCredentialCancellationException -> null
+                                        is NoCredentialException -> res.getString(R.string.login_error_no_google)
+                                        else -> res.getString(R.string.login_error_google_unavailable)
+                                    }
                                 }
                         }
                     },
                     onFacebookLogin = {
+                        if (signInProvider != null) return@LoginScreen
+                        signInProvider = SignInProvider.Facebook
+                        signInError = null
                         flowViewModel.signInWithFacebook(
-                            onSuccess = ::navigateAfterSignIn
+                            onSuccess = ::navigateAfterSignIn,
+                            onError = ::onSignInFailed,
                         )
                     },
                 )
@@ -342,7 +450,16 @@ fun NovaNavHost(
                     profileUiState = profileUiState,
                     isEditing = profileFlowMode == ProfileFlowMode.Edit,
                     profileViewModel = profileViewModel,
-                    onBack = { navController.popBackStack() },
+                    onBack = {
+                        if (profileFlowMode == ProfileFlowMode.Edit) {
+                            navController.popBackStack()
+                        } else {
+                            scope.launch {
+                                flowViewModel.logout()
+                                navController.replaceWith(AppRoute.SignIn, AppRoute.ProfileSetup)
+                            }
+                        }
+                    },
                     onComplete = {
                         if (profileFlowMode == ProfileFlowMode.Edit) {
                             navController.popBackStack()
@@ -357,6 +474,8 @@ fun NovaNavHost(
             composable(AppRoute.Home.routeName()) {
                 HomeShell(
                     messagesState = messagesUiState,
+                    discoverState = discoverState,
+                    discoverViewModel = discoverViewModel,
                     communityState = communityState,
                     communityViewModel = communityViewModel,
                     profileState = profileUiState,
@@ -366,9 +485,14 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.Chat)
                     },
                     onSearchClick = {
-                        navController.navigateTo(AppRoute.Search)
+                        navController.navigateTo(AppRoute.ChatSearch)
+                    },
+                    onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onCommunitySearchClick = {
+                        navController.navigateTo(AppRoute.CommunitySearch)
                     },
                     onNotificationClick = {
+                        notificationsViewModel.markAllSeenLocal()
                         navController.navigateTo(AppRoute.Notifications)
                     },
                     onSettingsClick = { navController.navigateTo(AppRoute.Settings) },
@@ -377,16 +501,20 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ProfileSetup)
                     },
                     onOpenProfile = { userId -> navController.navigateToProfileDetail(userId) },
+                    onDiscoverLike = ::openDiscoverChat,
                     onOpenConnections = { tab -> navController.navigateToProfileConnections(profileUiState.user.id, tab) },
                     onProfilePostLike = profileViewModel::likePost,
                     onProfilePostComment = profileViewModel::commentPost,
                     onProfilePostShare = profileViewModel::sharePost,
+                    onPostPublished = profileViewModel::refreshProfile,
                 )
             }
 
             composable(AppRoute.Messages.routeName()) {
                 HomeShell(
                     messagesState = messagesUiState,
+                    discoverState = discoverState,
+                    discoverViewModel = discoverViewModel,
                     communityState = communityState,
                     communityViewModel = communityViewModel,
                     profileState = profileUiState,
@@ -396,9 +524,14 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.Chat)
                     },
                     onSearchClick = {
-                        navController.navigateTo(AppRoute.Search)
+                        navController.navigateTo(AppRoute.ChatSearch)
+                    },
+                    onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onCommunitySearchClick = {
+                        navController.navigateTo(AppRoute.CommunitySearch)
                     },
                     onNotificationClick = {
+                        notificationsViewModel.markAllSeenLocal()
                         navController.navigateTo(AppRoute.Notifications)
                     },
                     onSettingsClick = { navController.navigateTo(AppRoute.Settings) },
@@ -407,10 +540,12 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ProfileSetup)
                     },
                     onOpenProfile = { userId -> navController.navigateToProfileDetail(userId) },
+                    onDiscoverLike = ::openDiscoverChat,
                     onOpenConnections = { tab -> navController.navigateToProfileConnections(profileUiState.user.id, tab) },
                     onProfilePostLike = profileViewModel::likePost,
                     onProfilePostComment = profileViewModel::commentPost,
                     onProfilePostShare = profileViewModel::sharePost,
+                    onPostPublished = profileViewModel::refreshProfile,
                     initialTab = 3,
                 )
             }
@@ -418,6 +553,8 @@ fun NovaNavHost(
             composable(AppRoute.Community.routeName()) {
                 HomeShell(
                     messagesState = messagesUiState,
+                    discoverState = discoverState,
+                    discoverViewModel = discoverViewModel,
                     communityState = communityState,
                     communityViewModel = communityViewModel,
                     profileState = profileUiState,
@@ -427,9 +564,14 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.Chat)
                     },
                     onSearchClick = {
-                        navController.navigateTo(AppRoute.Search)
+                        navController.navigateTo(AppRoute.ChatSearch)
+                    },
+                    onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onCommunitySearchClick = {
+                        navController.navigateTo(AppRoute.CommunitySearch)
                     },
                     onNotificationClick = {
+                        notificationsViewModel.markAllSeenLocal()
                         navController.navigateTo(AppRoute.Notifications)
                     },
                     onSettingsClick = { navController.navigateTo(AppRoute.Settings) },
@@ -438,11 +580,49 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ProfileSetup)
                     },
                     onOpenProfile = { userId -> navController.navigateToProfileDetail(userId) },
+                    onDiscoverLike = ::openDiscoverChat,
                     onOpenConnections = { tab -> navController.navigateToProfileConnections(profileUiState.user.id, tab) },
                     onProfilePostLike = profileViewModel::likePost,
                     onProfilePostComment = profileViewModel::commentPost,
                     onProfilePostShare = profileViewModel::sharePost,
+                    onPostPublished = profileViewModel::refreshProfile,
                     initialTab = 1,
+                )
+            }
+
+            composable(AppRoute.CommunitySearch.routeName()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                    CommunitySearchScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenProfile = { userId -> navController.navigateToProfileDetail(userId) },
+                        onOpenMedia = { mediaUrls, startIndex ->
+                            if (mediaUrls.isNotEmpty()) {
+                                previewMedia = PreviewMediaState(urls = mediaUrls, startIndex = startIndex)
+                            }
+                        },
+                    )
+                    previewMedia?.let { mediaState ->
+                        MediaViewer(
+                            mediaUrls = mediaState.urls,
+                            startIndex = mediaState.startIndex,
+                            onDismiss = { previewMedia = null },
+                        )
+                    }
+                }
+            }
+
+            composable(AppRoute.ChatSearch.routeName()) {
+                ChatSearchScreen(
+                    messagesState = messagesUiState,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { thread ->
+                        selectedChatThread = thread
+                        navController.navigateTo(AppRoute.Chat)
+                    },
                 )
             }
 
@@ -481,7 +661,7 @@ fun NovaNavHost(
 
                     profile = fetchedProfile
                     posts = fetchedPosts.orEmpty()
-                    error = if (fetchedProfile == null) "Unable to load profile" else null
+                    error = if (fetchedProfile == null) context.getString(R.string.profile_load_failed) else null
                     loading = false
                 }
 
@@ -490,13 +670,17 @@ fun NovaNavHost(
                         profile = null
                         posts = emptyList()
                         loading = false
-                        error = "Invalid profile"
+                        error = context.getString(R.string.profile_invalid)
                         return@LaunchedEffect
                     }
                     loadProfileDetail()
                 }
 
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
                     PublicProfileScreen(
                         profile = profile,
                         loading = loading,
@@ -546,6 +730,9 @@ fun NovaNavHost(
                             if (mediaUrls.isNotEmpty()) {
                                 previewMedia = PreviewMediaState(urls = mediaUrls, startIndex = startIndex)
                             }
+                        },
+                        onOpenProfile = { mentionedUserId ->
+                            navController.navigateToProfileDetail(mentionedUserId)
                         },
                         onLikePost = { post ->
                             scope.launch {
@@ -631,7 +818,7 @@ fun NovaNavHost(
 
             composable(AppRoute.Chat.routeName()) {
                 val chatUiState = chatScreenState(chatState, selectedChatThread)
-                val activeThread = selectedChatThread ?: chatUiState.thread
+                val activeThread = chatUiState.thread
                 LaunchedEffect(activeThread.id) {
                     if (activeThread.id.isNotBlank()) {
                         chatViewModel.openThread(activeThread)
@@ -655,14 +842,6 @@ fun NovaNavHost(
                         callViewModel.openVideoCall(participantName, threadId, peerUserId)
                         navController.navigateTo(AppRoute.VideoCall)
                     },
-                    onIncomingVoiceCall = {
-                        callViewModel.startIncomingVoiceCall(participantName, threadId, peerUserId = peerUserId)
-                        navController.navigateTo(AppRoute.VoiceCall)
-                    },
-                    onIncomingVideoCall = {
-                        callViewModel.startIncomingVideoCall(participantName, threadId, peerUserId = peerUserId)
-                        navController.navigateTo(AppRoute.VideoCall)
-                    },
                     onCallAgain = { summary ->
                         val againThreadId = summary.threadId.ifBlank { threadId }
                         val againPeerUserId = summary.peerUserId.ifBlank { peerUserId }
@@ -673,14 +852,23 @@ fun NovaNavHost(
                         navController.navigateTo(callRoute(summary.callType))
                     },
                     onSendMessage = { text, attachment -> chatViewModel.send(text, attachment) },
+                    onRetryMessage = { messageId -> chatViewModel.retryMessage(messageId) },
+                    onTypingChanged = { typing -> chatViewModel.setTyping(typing) },
                     onLoadMore = { chatViewModel.loadMore() },
+                    onDeleteThreadForMe = {
+                        chatViewModel.deleteCurrentThreadForMe()
+                        navController.popBackStack()
+                    },
+                    onDeleteMessageForMe = { messageId -> chatViewModel.deleteMessageForMe(messageId) },
+                    onRecallMessage = { messageId -> chatViewModel.recallMessage(messageId) },
+                    onEditMessage = { messageId, text -> chatViewModel.editMessage(messageId, text) },
                 )
             }
 
             composable(AppRoute.VoiceCall.routeName()) {
                 val participantName = selectedChatThread?.user?.name ?: callState.participantName.ifBlank { "User" }
                 LaunchedEffect(participantName) {
-                    if (callState.isActive && callState.participantName == participantName && callState.callType == CallType.Voice) {
+                    if (callState.isActive) {
                         callViewModel.expand()
                     } else {
                         callViewModel.openVoiceCall(
@@ -692,9 +880,14 @@ fun NovaNavHost(
                 }
                 VoiceCallScreen(
                     uiState = callState,
+                    audioState = callAudioState,
+                    onToggleAudioRoute = { callSystem?.audio?.cycleRoute() },
                     onBack = {
+                        // Back never ends a call: shrink it to the floating window and return to the app.
                         callViewModel.minimize()
-                        navController.popBackStack()
+                        if (!navController.popBackStack()) {
+                            navController.navigateTo(AppRoute.Home)
+                        }
                     },
                     onAnswerCall = callViewModel::answerCall,
                     onEndCall = callViewModel::hangUp,
@@ -705,7 +898,7 @@ fun NovaNavHost(
             composable(AppRoute.VideoCall.routeName()) {
                 val participantName = selectedChatThread?.user?.name ?: callState.participantName.ifBlank { "User" }
                 LaunchedEffect(participantName) {
-                    if (callState.isActive && callState.participantName == participantName && callState.callType == CallType.Video) {
+                    if (callState.isActive) {
                         callViewModel.expand()
                     } else {
                         callViewModel.openVideoCall(
@@ -717,10 +910,16 @@ fun NovaNavHost(
                 }
                 VideoCallScreen(
                     uiState = callState,
+                    audioState = callAudioState,
+                    isPictureInPicture = isPictureInPicture,
+                    onToggleAudioRoute = { callSystem?.audio?.cycleRoute() },
                     selfAvatarUrl = profileUiState.user.photoUrl,
                     onBack = {
+                        // Back never ends a call: shrink it to the floating window and return to the app.
                         callViewModel.minimize()
-                        navController.popBackStack()
+                        if (!navController.popBackStack()) {
+                            navController.navigateTo(AppRoute.Home)
+                        }
                     },
                     onAnswerCall = callViewModel::answerCall,
                     onEndCall = callViewModel::hangUp,
@@ -847,6 +1046,7 @@ private fun chatScreenState(
             when {
                 selected == null -> loaded
                 loaded.thread.id.isBlank() || loaded.thread.id == "placeholder" -> loaded.copy(thread = selected)
+                selected.id.startsWith("dm-") && loaded.thread.user.id == selected.user.id -> loaded
                 loaded.thread.id != selected.id -> loaded.copy(thread = selected)
                 else -> loaded
             }
@@ -900,11 +1100,11 @@ private fun profileScreenState(
             vipTierName = "VIP 0",
             premium = false,
         ),
-        bio = "Add a bio, interests, avatar, and featured photos.",
+        bio = "",
         featuredPhotos = emptyList(),
         interests = emptyList(),
-        diamonds = 100,
-        prompts = listOf("What makes you smile?", "A weekend I love looks like...", "My vibe in three words..."),
+        diamonds = 0,
+        prompts = emptyList(),
         badges = emptyList(),
         stats = emptyList(),
         settings = settings,
@@ -935,30 +1135,29 @@ private fun startCallFromNotification(
     payload: CallNotificationPayload,
     autoAnswer: Boolean,
 ) {
-    val participantName = payload.participantName.ifBlank { "User" }
-    when (payload.direction.uppercase()) {
-        "INCOMING" -> when (payload.callType) {
-            CallType.Voice -> callViewModel.startIncomingVoiceCall(
-                participantName = participantName,
-                threadId = payload.threadId,
-                callId = payload.callId,
-                peerUserId = payload.peerUserId,
-            )
-            CallType.Video -> callViewModel.startIncomingVideoCall(
-                participantName = participantName,
-                threadId = payload.threadId,
-                callId = payload.callId,
-                peerUserId = payload.peerUserId,
-            )
+    if (payload.direction.equals("INCOMING", ignoreCase = true)) {
+        val accepted = callViewModel.receiveIncomingCall(
+            participantName = payload.participantName.ifBlank { "User" },
+            threadId = payload.threadId,
+            callId = payload.callId,
+            peerUserId = payload.peerUserId,
+            callType = payload.callType,
+        )
+        if (!accepted) return
+        navController.navigateTo(callRoute(payload.callType))
+        if (autoAnswer) {
+            callViewModel.answerCall()
         }
-        else -> when (payload.callType) {
-            CallType.Voice -> callViewModel.openVoiceCall(participantName, payload.threadId, payload.peerUserId)
-            CallType.Video -> callViewModel.openVideoCall(participantName, payload.threadId, payload.peerUserId)
-        }
+        return
     }
-    navController.navigateTo(callRoute(payload.callType))
-    if (autoAnswer && payload.direction.equals("INCOMING", ignoreCase = true)) {
-        callViewModel.answerCall()
+    // Ongoing-call notification: return to the call if it is still alive, otherwise open the chat.
+    // Never start a new call from here.
+    val current = callViewModel.uiState.value
+    if (current.isActive && (current.callId == payload.callId || payload.callId.isBlank())) {
+        callViewModel.expand()
+        navController.navigateTo(callRoute(current.callType))
+    } else {
+        navController.navigateTo(AppRoute.Chat)
     }
 }
 
@@ -1006,3 +1205,6 @@ private fun shareProfilePost(context: android.content.Context, post: BackendComm
     }
     context.startActivity(Intent.createChooser(intent, "Share post"))
 }
+
+
+
