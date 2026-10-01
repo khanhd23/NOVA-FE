@@ -1,5 +1,6 @@
 package com.nova.app.core.viewmodel
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nova.app.core.domain.CompleteAuthUseCase
@@ -30,6 +31,8 @@ import com.nova.app.core.domain.ToggleTravelModeUseCase
 import com.nova.app.core.domain.UpdateLanguageUseCase
 import com.nova.app.core.backend.BackendAuthProvider
 import com.nova.app.core.backend.BackendNotification
+import com.nova.app.core.backend.BackendRealtimeEventType
+import com.nova.app.core.backend.payloadBoolean
 import com.nova.app.core.backend.BackendRuntime
 import com.nova.app.core.backend.BackendProfile
 import com.nova.app.core.backend.BackendProfilePage
@@ -45,6 +48,7 @@ import com.nova.app.core.model.DiscoverUiState
 import com.nova.app.core.model.HomeUiState
 import com.nova.app.core.model.LaunchUiState
 import com.nova.app.core.model.MessagesUiState
+import com.nova.app.core.model.NotificationItem
 import com.nova.app.core.model.NotificationsUiState
 import com.nova.app.core.model.ProfileUiState
 import com.nova.app.core.model.ProfileConnectionItem
@@ -73,11 +77,10 @@ class LaunchViewModel(
 ) : ViewModel() {
     val uiState: StateFlow<LaunchUiState> = observeSession()
         .map { session -> LaunchUiState(target = resolveTarget(session)) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, LaunchUiState(AppRoute.Onboarding))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, LaunchUiState(AppRoute.SignIn))
 
     private fun resolveTarget(session: SessionState): AppRoute {
         return when {
-            session.isFirstLaunch || !session.onboardingCompleted -> AppRoute.Onboarding
             !session.otpVerified -> AppRoute.SignIn
             !session.profileCompleted -> AppRoute.ProfileSetup
             else -> AppRoute.Home
@@ -134,9 +137,7 @@ class FlowViewModel(
             onError(throwable)
             return@launch
         }
-        if (session.onboardingComplete) {
-            completeOnboardingUseCase()
-        }
+        completeOnboardingUseCase()
         if (session.profileComplete) {
             completeProfileUseCase()
         }
@@ -163,6 +164,7 @@ class HomeViewModel(
 
 class DiscoverViewModel(
     observeDiscover: ObserveDiscoverUseCase,
+    private val repository: NovaRepository,
     private val likeCandidateUseCase: LikeCandidateUseCase,
     private val superLikeCandidateUseCase: SuperLikeCandidateUseCase,
     private val skipCandidateUseCase: SkipCandidateUseCase,
@@ -174,20 +176,28 @@ class DiscoverViewModel(
     init {
         viewModelScope.launch {
             delay(260)
+            runCatching { repository.refreshDiscover() }
             observeDiscover().collect { state ->
                 _uiState.value = NovaLoadState.Success(state)
             }
         }
     }
 
+    fun applyFilters(gender: String, minAge: Int, maxAge: Int) = viewModelScope.launch {
+        repository.applyDiscoverFilters(gender, minAge, maxAge)
+    }
+
     fun like() = viewModelScope.launch { likeCandidateUseCase() }
     fun superLike() = viewModelScope.launch { superLikeCandidateUseCase() }
     fun skip() = viewModelScope.launch { skipCandidateUseCase() }
     fun save() = viewModelScope.launch { saveCandidateUseCase() }
+    fun poke() = viewModelScope.launch { repository.pokeCandidate() }
+    fun clearMessage() = viewModelScope.launch { repository.clearDiscoverMessage() }
 }
 
 class MessagesViewModel(
     observeMessages: ObserveMessagesUseCase,
+    private val repository: NovaRepository,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow<NovaLoadState<MessagesUiState>>(NovaLoadState.Loading)
     val uiState: StateFlow<NovaLoadState<MessagesUiState>> = _uiState.asStateFlow()
@@ -199,6 +209,10 @@ class MessagesViewModel(
                 _uiState.value = NovaLoadState.Success(state)
             }
         }
+    }
+
+    fun markVisibleThreadsSeen() = viewModelScope.launch {
+        repository.markVisibleChatThreadsSeen()
     }
 }
 
@@ -224,12 +238,36 @@ class ChatViewModel(
         sendMessage(text.trim(), attachment)
     }
 
+    fun retryMessage(messageId: String) = viewModelScope.launch {
+        repository.retryMessage(messageId)
+    }
+
+    fun setTyping(typing: Boolean) = viewModelScope.launch {
+        repository.setChatTyping(typing)
+    }
+
     fun openThread(thread: ChatThread) = viewModelScope.launch {
         repository.openChatThread(thread)
     }
 
     fun loadMore() = viewModelScope.launch {
         repository.loadMoreChatMessages()
+    }
+
+    fun deleteCurrentThreadForMe() = viewModelScope.launch {
+        repository.deleteCurrentThreadForMe()
+    }
+
+    fun deleteMessageForMe(messageId: String) = viewModelScope.launch {
+        repository.deleteMessageForMe(messageId)
+    }
+
+    fun recallMessage(messageId: String) = viewModelScope.launch {
+        repository.recallMessage(messageId)
+    }
+
+    fun editMessage(messageId: String, text: String) = viewModelScope.launch {
+        repository.editMessage(messageId, text)
     }
 }
 
@@ -260,7 +298,7 @@ class CommunityViewModel(
     fun joinEvent(eventId: String) = viewModelScope.launch { joinEventUseCase(eventId) }
     fun refresh(tab: String = "for_you") = viewModelScope.launch { repository.refreshCommunity(tab, refresh = true) }
     fun selectTab(tab: String) = viewModelScope.launch { repository.refreshCommunity(tab, refresh = false) }
-    fun publishPost(draft: CreatePostDraft) = viewModelScope.launch { repository.createCommunityPost(draft) }
+    suspend fun publishPost(draft: CreatePostDraft): Boolean = repository.createCommunityPost(draft)
     fun likePost(postId: String, liked: Boolean) = viewModelScope.launch { repository.likeCommunityPost(postId, liked) }
     fun commentPost(postId: String, text: String) = viewModelScope.launch { repository.commentCommunityPost(postId, text) }
     fun sharePost(postId: String, target: String = "profile", recipientUserId: String? = null, copyLink: Boolean = true) =
@@ -299,10 +337,13 @@ class ProfileViewModel(
     fun likePost(postId: String, liked: Boolean) = viewModelScope.launch { repository.likeCommunityPost(postId, liked) }
     fun commentPost(postId: String, text: String) = viewModelScope.launch { repository.commentCommunityPost(postId, text) }
     fun sharePost(postId: String) = viewModelScope.launch { repository.shareCommunityPost(postId) }
+    fun refreshProfile() = viewModelScope.launch { refreshProfileUseCase() }
 
     suspend fun saveProfile(
         displayName: String,
         bio: String,
+        age: Int?,
+        gender: String?,
         avatarUrl: String?,
         featuredPhotos: List<String>,
         interests: List<String>,
@@ -311,11 +352,22 @@ class ProfileViewModel(
             BackendProfileUpdateRequest(
                 displayName = displayName,
                 bio = bio,
+                age = age,
+                gender = gender,
                 photoUrl = avatarUrl,
                 featuredPhotos = featuredPhotos,
                 interests = interests,
             )
         )
+    }
+
+    suspend fun uploadProfileImage(
+        uri: Uri,
+        fileName: String,
+        mimeType: String,
+        title: String,
+    ): String? {
+        return repository.uploadProfileImage(uri, fileName, mimeType, title)
     }
 }
 
@@ -455,6 +507,7 @@ class ProfileConnectionsViewModel(
                 id = item.userId,
                 name = item.displayName,
                 username = item.username,
+                bio = item.bio,
                 avatarUrl = item.avatarUrl,
                 gender = item.gender,
                 interests = item.interests,
@@ -581,6 +634,7 @@ class SearchViewModel(
                 id = item.userId,
                 publicId = item.publicId,
                 name = item.displayName,
+                bio = item.bio,
                 gender = item.gender,
                 interests = item.interests,
                 avatarUrl = item.avatarUrl,
@@ -613,6 +667,35 @@ class NotificationsViewModel(
 
     init {
         refresh()
+        viewModelScope.launch {
+            backendRuntime.events.collect { event ->
+                if (event.type != BackendRealtimeEventType.NOTIFICATION_CREATED) {
+                    return@collect
+                }
+                val title = event.title ?: return@collect
+                val body = event.body ?: return@collect
+                val kind = event.payload["kind"] ?: "System"
+                if (kind.equals("MESSAGE", ignoreCase = true) || kind.equals("CALL", ignoreCase = true)) {
+                    return@collect
+                }
+                val notification = NotificationItem(
+                    id = event.payload["notificationId"] ?: event.id,
+                    title = title,
+                    description = body,
+                    timeLabel = event.payload["timeLabel"] ?: "Now",
+                    type = kind,
+                    unread = !event.payloadBoolean("read"),
+                    actionTarget = event.payload["actionTarget"],
+                    threadId = event.threadId ?: event.payload["threadId"],
+                )
+                val nextItems = listOf(notification) + _uiState.value.items.filterNot { it.id == notification.id }
+                _uiState.value = _uiState.value.copy(
+                    items = nextItems,
+                    unreadCount = nextItems.count { it.unread },
+                    loading = false,
+                )
+            }
+        }
     }
 
     fun refresh() {
@@ -647,6 +730,18 @@ class NotificationsViewModel(
                     loading = false,
                 )
             }
+        }
+    }
+
+    fun markAllSeenLocal() {
+        val items = _uiState.value.items.map { it.copy(unread = false) }
+        _uiState.value = _uiState.value.copy(
+            items = items,
+            unreadCount = 0,
+            loading = false,
+        )
+        viewModelScope.launch {
+            backendRuntime.markAllNotificationsRead()
         }
     }
 

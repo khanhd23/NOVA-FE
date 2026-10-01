@@ -23,8 +23,8 @@ data class AppSettings(
 
 @Immutable
 data class SessionState(
-    val isFirstLaunch: Boolean = true,
-    val onboardingCompleted: Boolean = false,
+    val isFirstLaunch: Boolean = false,
+    val onboardingCompleted: Boolean = true,
     val profileCompleted: Boolean = false,
     val otpVerified: Boolean = false,
 )
@@ -87,6 +87,7 @@ data class ScreenSpec(
 
 @Immutable
 data class DiscoveryCandidate(
+    val candidateId: String = "",
     val user: UserCard,
     val bio: String,
     val compatibility: Int,
@@ -131,6 +132,7 @@ data class ChatMessage(
     val text: String = "",
     val sentByMe: Boolean,
     val timeLabel: String,
+    val createdAt: String? = null,
     val isVoice: Boolean = false,
     val isGif: Boolean = false,
     val isSticker: Boolean = false,
@@ -140,9 +142,12 @@ data class ChatMessage(
     val attachmentMimeType: String? = null,
     val attachmentName: String? = null,
     val attachmentDurationSeconds: Int? = null,
+    val attachmentWidth: Int? = null,
+    val attachmentHeight: Int? = null,
     val translatedText: String? = null,
     val isRead: Boolean = false,
     val callSummary: CallSummaryUiState? = null,
+    val status: String = "SENT",
 ) {
     val isCallLog: Boolean
         get() = callSummary != null
@@ -199,6 +204,7 @@ data class CommunityPost(
     val thumbnailUrl: String? = null,
     val tags: List<String> = emptyList(),
     val mentionedUserIds: List<String> = emptyList(),
+    val mentions: List<CommunityMention> = emptyList(),
     val likes: Int,
     val comments: Int,
     val commentsPreview: List<CommunityComment> = emptyList(),
@@ -206,6 +212,7 @@ data class CommunityPost(
     val likedByMe: Boolean = false,
     val sharedByMe: Boolean = false,
     val timeLabel: String,
+    val createdAt: String = "",
 ) {
     val allMediaUrls: List<String>
         get() = (if (mediaUrls.isNotEmpty()) mediaUrls else mediaUrl?.let { listOf(it) } ?: emptyList()).normalizedPostMediaUrls()
@@ -230,8 +237,18 @@ data class CommunityComment(
     val author: UserCard,
     val text: String,
     val timeLabel: String,
+    val createdAt: String = "",
     val mine: Boolean = false,
     val mentionedUserIds: List<String> = emptyList(),
+    val mentions: List<CommunityMention> = emptyList(),
+)
+
+@Immutable
+data class CommunityMention(
+    val userId: String,
+    val displayName: String,
+    val username: String = "",
+    val avatarUrl: String = "",
 )
 
 @Immutable
@@ -316,6 +333,7 @@ data class NotificationItem(
 data class SearchResultItem(
     val id: String,
     val name: String,
+    val bio: String = "",
     val gender: String,
     val interests: List<String>,
     val avatarUrl: String,
@@ -354,6 +372,7 @@ data class ProfileConnectionItem(
     val id: String,
     val name: String,
     val username: String,
+    val bio: String = "",
     val avatarUrl: String,
     val gender: String,
     val interests: List<String>,
@@ -425,10 +444,16 @@ data class HomeUiState(
 data class DiscoverUiState(
     val queue: List<DiscoveryCandidate>,
     val activeIndex: Int,
+    val selectedGender: String = "Both",
+    val minAge: Int = 16,
+    val maxAge: Int = 70,
     val liked: Int = 0,
     val superLiked: Int = 0,
     val saved: Int = 0,
     val skipped: Int = 0,
+    val loading: Boolean = false,
+    val error: String? = null,
+    val pokeMessage: String? = null,
     val iceBreakerHint: String = "Ask about their latest trip or favorite playlist.",
 )
 
@@ -488,7 +513,7 @@ data class ProfileUiState(
     val featuredPhotos: List<String> = emptyList(),
     val interests: List<String> = emptyList(),
     val posts: List<CommunityPost> = emptyList(),
-    val diamonds: Int = 100,
+    val diamonds: Int = 0,
     val prompts: List<String>,
     val badges: List<BadgeItem>,
     val stats: List<StatCard>,
@@ -502,21 +527,3 @@ data class ProfileUiState(
     val compatibility: List<CompatibilityMetric>,
     val filters: List<SearchFilter>,
 )
-
-object SampleMedia {
-    val portrait1 = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=80"
-    val portrait2 = "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=900&q=80"
-    val portrait3 = "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=900&q=80"
-    val portrait4 = "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=900&q=80"
-    val portrait5 = "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=80"
-    val portrait6 = "https://images.unsplash.com/photo-1500917293891-ef795e70e1f6?auto=format&fit=crop&w=900&q=80"
-    val portrait7 = "https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?auto=format&fit=crop&w=900&q=80"
-    val portrait8 = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=900&q=80"
-    val portrait9 = "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=80"
-    val portrait10 = "https://images.unsplash.com/photo-1521119989659-a83eee488004?auto=format&fit=crop&w=900&q=80"
-
-    val landscape1 = "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80"
-    val landscape2 = "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1400&q=80"
-    val landscape3 = "https://images.unsplash.com/photo-1493246507139-91e8fad9978e?auto=format&fit=crop&w=1400&q=80"
-    val landscape4 = "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1400&q=80"
-}

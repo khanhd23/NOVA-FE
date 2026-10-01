@@ -24,8 +24,15 @@ import kotlinx.coroutines.withContext
 
 class NovaBackendClient(
     private val baseUrl: String = BackendConfig.baseUrl,
-    private val okHttpClient: OkHttpClient = defaultClient(),
+    baseHttpClient: OkHttpClient = defaultClient(),
 ) {
+    /** Set by the runtime so expired access tokens can be refreshed transparently. */
+    @Volatile
+    var tokenStore: SessionTokenStore? = null
+
+    private val okHttpClient: OkHttpClient = baseHttpClient.newBuilder()
+        .authenticator(TokenAuthenticator(baseUrl, baseHttpClient) { tokenStore })
+        .build()
 
     suspend fun login(
         provider: BackendAuthProvider,
@@ -48,11 +55,12 @@ class NovaBackendClient(
             val tokens = data.optJSONObject("tokens") ?: throw IOException("Login response missing tokens")
             val me = data.optJSONObject("me") ?: throw IOException("Login response missing profile")
             BackendSession(
-                accessToken = tokens.optString("accessToken"),
-                refreshToken = tokens.optString("refreshToken"),
-                userId = me.optString("userId"),
-                displayName = me.optString("displayName"),
-                avatarUrl = me.optString("avatarUrl").takeIf { it.isNotBlank() },
+                accessToken = tokens.optText("accessToken"),
+                refreshToken = tokens.optText("refreshToken"),
+                userId = me.optText("userId"),
+                publicId = me.optText("publicId"),
+                displayName = me.optText("displayName"),
+                avatarUrl = me.optText("avatarUrl").takeIf { it.isNotBlank() },
                 onboardingComplete = me.optBoolean("onboardingComplete", false),
                 profileComplete = me.optBoolean("profileComplete", false),
             )
@@ -121,6 +129,67 @@ class NovaBackendClient(
         }
     }
 
+    suspend fun fetchDiscover(
+        accessToken: String,
+        gender: String? = null,
+        minAge: Int? = null,
+        maxAge: Int? = null,
+        excludeIds: List<String> = emptyList(),
+    ): BackendDiscoverResponse? {
+        return withContext(Dispatchers.IO) {
+            val queryParams = buildList {
+                if (!gender.isNullOrBlank()) add("gender=${encode(gender)}")
+                if (minAge != null) add("minAge=$minAge")
+                if (maxAge != null) add("maxAge=$maxAge")
+                excludeIds.filter { it.isNotBlank() }.forEach { add("excludeIds=${encode(it)}") }
+            }.joinToString("&")
+            val path = if (queryParams.isBlank()) "/api/v1/discover" else "/api/v1/discover?$queryParams"
+            val json = requestJson(
+                method = "GET",
+                path = path,
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseDiscover(data)
+        }
+    }
+
+    suspend fun swipeDiscoverCandidate(accessToken: String, candidateId: String, direction: String): BackendSwipeResponse? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "/api/v1/discover/swipe",
+                body = JSONObject()
+                    .put("candidateId", candidateId)
+                    .put("direction", direction),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            BackendSwipeResponse(
+                matched = data.optBoolean("matched"),
+                message = data.optText("message"),
+                nextCandidateId = data.optText("nextCandidateId").takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
+    suspend fun pokeDiscoverCandidate(accessToken: String, candidateId: String): BackendPokeResponse? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "/api/v1/discover/poke",
+                body = JSONObject().put("candidateId", candidateId),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            BackendPokeResponse(
+                delivered = data.optBoolean("delivered"),
+                message = data.optText("message"),
+                nextCandidateId = data.optText("nextCandidateId").takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
     suspend fun fetchNotifications(accessToken: String): List<BackendNotification>? {
         return withContext(Dispatchers.IO) {
             val json = requestJson(
@@ -133,6 +202,73 @@ class NovaBackendClient(
         }
     }
 
+    suspend fun fetchCommerceCatalog(): BackendCommerceCatalog? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "GET",
+                path = "/api/v1/commerce/catalog",
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseCommerceCatalog(data)
+        }
+    }
+
+    suspend fun fetchCommerceMe(accessToken: String): BackendCommerceMe? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "GET",
+                path = "/api/v1/commerce/me",
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseCommerceMe(data)
+        }
+    }
+
+    suspend fun createCommerceOrder(
+        accessToken: String,
+        productId: String,
+        purchaseType: String,
+        provider: String = "DEMO",
+    ): BackendCommerceOrder? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "/api/v1/commerce/orders",
+                body = JSONObject()
+                    .put("productId", productId)
+                    .put("purchaseType", purchaseType)
+                    .put("provider", provider)
+                    .put("note", "Android in-app checkout"),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseCommerceOrder(data)
+        }
+    }
+
+    suspend fun confirmCommerceOrder(
+        accessToken: String,
+        orderId: String,
+        success: Boolean,
+        transactionId: String,
+        message: String,
+    ): BackendCommerceOrder? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "/api/v1/commerce/orders/${encode(orderId)}/confirm",
+                body = JSONObject()
+                    .put("success", success)
+                    .put("transactionId", transactionId)
+                    .put("message", message),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseCommerceOrder(data)
+        }
+    }
+
     suspend fun fetchThreads(accessToken: String): List<BackendChatThread>? {
         return withContext(Dispatchers.IO) {
             val json = requestJson(
@@ -142,6 +278,28 @@ class NovaBackendClient(
             )
             val data = json.optJSONArray("data") ?: json.optJSONObject("data")?.optJSONArray("items") ?: return@withContext emptyList()
             parseChatThreads(data)
+        }
+    }
+
+    suspend fun searchChatThreads(
+        accessToken: String,
+        query: String,
+        page: Int = 0,
+        size: Int = 10,
+    ): BackendChatThreadPage? {
+        return withContext(Dispatchers.IO) {
+            val queryParams = buildList {
+                add("q=${encode(query)}")
+                add("page=$page")
+                add("size=$size")
+            }.joinToString("&")
+            val json = requestJson(
+                method = "GET",
+                path = "/api/v1/threads/search?$queryParams",
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseChatThreadPage(data)
         }
     }
 
@@ -172,6 +330,18 @@ class NovaBackendClient(
                 method = "POST",
                 path = "/api/v1/notifications/read",
                 body = JSONObject().put("notificationId", notificationId),
+                accessToken = accessToken,
+            )
+            fetchNotifications(accessToken)
+        }
+    }
+
+    suspend fun markAllNotificationsRead(accessToken: String): List<BackendNotification>? {
+        return withContext(Dispatchers.IO) {
+            requestJson(
+                method = "POST",
+                path = "/api/v1/notifications/read-all",
+                body = JSONObject(),
                 accessToken = accessToken,
             )
             fetchNotifications(accessToken)
@@ -215,6 +385,28 @@ class NovaBackendClient(
             )
             val data = json.optJSONArray("data") ?: json.optJSONObject("data")?.optJSONArray("items")
             parseCommunityPosts(data)
+        }
+    }
+
+    suspend fun searchCommunityPosts(
+        accessToken: String,
+        query: String,
+        page: Int = 0,
+        size: Int = 10,
+    ): BackendCommunityPostPage {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "GET",
+                path = "/api/v1/community-posts/search?q=${encode(query)}&page=$page&size=$size",
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: JSONObject()
+            BackendCommunityPostPage(
+                items = parseCommunityPosts(data.optJSONArray("items")),
+                page = data.optInt("page", page),
+                size = data.optInt("size", size),
+                total = data.optLong("total", 0L),
+            )
         }
     }
 
@@ -277,6 +469,28 @@ class NovaBackendClient(
         }
     }
 
+    suspend fun fetchCommunityComments(
+        accessToken: String,
+        postId: String,
+        page: Int = 0,
+        size: Int = 20,
+    ): BackendCommunityCommentPage {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "GET",
+                path = "/api/v1/community-posts/${encode(postId)}/comments?page=$page&size=$size",
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: JSONObject()
+            BackendCommunityCommentPage(
+                items = data.optJSONArray("items").toCommunityComments(),
+                page = data.optInt("page", page),
+                size = data.optInt("size", size),
+                total = data.optLong("total", 0L),
+            )
+        }
+    }
+
     suspend fun shareCommunityPost(
         accessToken: String,
         postId: String,
@@ -295,7 +509,7 @@ class NovaBackendClient(
             )
             val data = json.optJSONObject("data") ?: return@withContext null
             BackendCommunityShareResponse(
-                shareUrl = data.optString("shareUrl"),
+                shareUrl = data.optText("shareUrl"),
                 post = data.optJSONObject("post")?.let { parseCommunityPost(it) } ?: return@withContext null,
             )
         }
@@ -321,7 +535,7 @@ class NovaBackendClient(
             for (index in 0 until data.length()) {
                 val item = data.optJSONObject(index) ?: continue
                 items += BackendCommunityTagSuggestion(
-                    tag = item.optString("tag"),
+                    tag = item.optText("tag"),
                     hotness = item.optInt("hotness"),
                     postCount = item.optInt("postCount"),
                     exactMatch = item.optBoolean("exactMatch"),
@@ -339,6 +553,7 @@ class NovaBackendClient(
                 .put("bio", requestModel.bio ?: JSONObject.NULL)
                 .put("city", requestModel.city ?: JSONObject.NULL)
                 .put("age", requestModel.age ?: JSONObject.NULL)
+                .put("gender", requestModel.gender ?: JSONObject.NULL)
                 .put("photoUrl", requestModel.photoUrl ?: JSONObject.NULL)
                 .put("featuredPhotos", JSONArray(requestModel.featuredPhotos))
                 .put("interests", JSONArray(requestModel.interests))
@@ -449,12 +664,12 @@ class NovaBackendClient(
                 val json = JSONObject(raw)
                 val data = json.optJSONObject("data") ?: return@withContext null
                 BackendMediaAsset(
-                    id = data.optString("id"),
-                    title = data.optString("title"),
-                    url = data.optString("url"),
-                    mimeType = data.optString("mimeType"),
-                    kind = data.optString("kind"),
-                    previewUrl = data.optString("previewUrl").takeIf { it.isNotBlank() },
+                    id = data.optText("id"),
+                    title = data.optText("title"),
+                    url = data.optText("url"),
+                    mimeType = data.optText("mimeType"),
+                    kind = data.optText("kind"),
+                    previewUrl = data.optText("previewUrl").takeIf { it.isNotBlank() },
                 )
             }
         }
@@ -468,6 +683,54 @@ class NovaBackendClient(
                 body = JSONObject().put("typing", typing),
                 accessToken = accessToken,
             )
+        }
+    }
+
+    suspend fun deleteThreadForMe(accessToken: String, threadId: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            requestJson(
+                method = "DELETE",
+                path = "/api/v1/threads/$threadId",
+                accessToken = accessToken,
+            )
+            true
+        }
+    }
+
+    suspend fun deleteMessageForMe(accessToken: String, threadId: String, messageId: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            requestJson(
+                method = "DELETE",
+                path = "/api/v1/threads/$threadId/messages/$messageId",
+                accessToken = accessToken,
+            )
+            true
+        }
+    }
+
+    suspend fun recallMessage(accessToken: String, threadId: String, messageId: String): BackendChatMessage? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "/api/v1/threads/$threadId/messages/$messageId/recall",
+                body = JSONObject(),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseChatMessage(data)
+        }
+    }
+
+    suspend fun editMessage(accessToken: String, threadId: String, messageId: String, text: String): BackendChatMessage? {
+        return withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "PATCH",
+                path = "/api/v1/threads/$threadId/messages/$messageId",
+                body = JSONObject().put("text", text),
+                accessToken = accessToken,
+            )
+            val data = json.optJSONObject("data") ?: return@withContext null
+            parseChatMessage(data)
         }
     }
 
@@ -533,7 +796,7 @@ class NovaBackendClient(
             val json = requestJson(
                 method = "POST",
                 path = "/api/v1/calls/$callId/end",
-                body = JSONObject().put("reason", reason.name.uppercase()),
+                body = JSONObject().put("reason", reason.toBackendValue()),
                 accessToken = accessToken,
             )
             parseCallSession(json)
@@ -629,7 +892,7 @@ class NovaBackendClient(
             return null
         }
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
-        val type = BackendRealtimeEventType.entries.firstOrNull { it.name == json.optString("type") }
+        val type = BackendRealtimeEventType.entries.firstOrNull { it.name == json.optText("type") }
             ?: BackendRealtimeEventType.UNKNOWN
         val payloadObject = json.optJSONObject("payload")
         val payload = mutableMapOf<String, String>()
@@ -646,39 +909,39 @@ class NovaBackendClient(
             }
         }
         return BackendRealtimeEvent(
-            id = json.optString("id"),
+            id = json.optText("id"),
             type = type,
-            room = json.optString("room").takeIf { it.isNotBlank() },
-            actorUserId = json.optString("actorUserId").takeIf { it.isNotBlank() },
-            targetUserId = json.optString("targetUserId").takeIf { it.isNotBlank() },
-            threadId = json.optString("threadId").takeIf { it.isNotBlank() },
-            callId = json.optString("callId").takeIf { it.isNotBlank() },
-            messageId = json.optString("messageId").takeIf { it.isNotBlank() },
-            title = json.optString("title").takeIf { it.isNotBlank() },
-            body = json.optString("body").takeIf { it.isNotBlank() },
+            room = json.optText("room").takeIf { it.isNotBlank() },
+            actorUserId = json.optText("actorUserId").takeIf { it.isNotBlank() },
+            targetUserId = json.optText("targetUserId").takeIf { it.isNotBlank() },
+            threadId = json.optText("threadId").takeIf { it.isNotBlank() },
+            callId = json.optText("callId").takeIf { it.isNotBlank() },
+            messageId = json.optText("messageId").takeIf { it.isNotBlank() },
+            title = json.optText("title").takeIf { it.isNotBlank() },
+            body = json.optText("body").takeIf { it.isNotBlank() },
             payload = payload,
-            timestamp = json.optString("timestamp").takeIf { it.isNotBlank() },
+            timestamp = json.optText("timestamp").takeIf { it.isNotBlank() },
         )
     }
 
     private fun parseProfile(me: JSONObject): BackendProfile {
         return BackendProfile(
-            userId = me.optString("userId"),
-            publicId = me.optString("publicId"),
-            displayName = me.optString("displayName"),
-            username = me.optString("username"),
-            bio = me.optString("bio"),
-            avatarUrl = me.optString("avatarUrl"),
-            featuredPhotos = me.optJSONArray("featuredPhotos").toStringList(),
+            userId = me.optText("userId"),
+            publicId = me.optText("publicId"),
+            displayName = me.optText("displayName"),
+            username = me.optText("username"),
+            bio = me.optText("bio"),
+            avatarUrl = resolvedBackendMediaUrl(me.optText("avatarUrl")),
+            featuredPhotos = me.optJSONArray("featuredPhotos").toResolvedMediaUrlList(),
             interests = me.optJSONArray("interests").toStringList(),
             age = me.optInt("age"),
-            city = me.optString("city"),
-            gender = me.optString("gender").ifBlank { "Not specified" },
+            city = me.optText("city"),
+            gender = me.optText("gender").ifBlank { "Not specified" },
             verified = me.optBoolean("verified"),
             online = me.optBoolean("online"),
             premium = me.optBoolean("premium"),
-            vipTierId = me.optString("vipTierId").takeIf { it.isNotBlank() },
-            vipTierName = me.optString("vipTierName").takeIf { it.isNotBlank() },
+            vipTierId = me.optText("vipTierId").takeIf { it.isNotBlank() },
+            vipTierName = me.optText("vipTierName").takeIf { it.isNotBlank() },
             followersCount = me.optInt("followersCount", 0),
             followingCount = me.optInt("followingCount", 0),
             friendsCount = me.optInt("friendsCount", 0),
@@ -697,20 +960,23 @@ class NovaBackendClient(
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
                 items += BackendSearchUser(
-                    userId = item.optString("userId"),
-                    publicId = item.optString("publicId"),
-                    displayName = item.optString("displayName"),
+                    userId = item.optText("userId"),
+                    publicId = item.optText("publicId"),
+                    displayName = item.optText("displayName"),
+                    bio = item.optText("bio"),
                     age = item.optInt("age"),
-                    avatarUrl = item.optString("avatarUrl"),
-                    vipTierId = item.optString("vipTierId").takeIf { it.isNotBlank() },
-                    vipTierName = item.optString("vipTierName").takeIf { it.isNotBlank() },
+                    avatarUrl = resolvedBackendMediaUrl(item.optText("avatarUrl")),
+                    username = item.optText("username"),
+                    vipTierId = item.optText("vipTierId").takeIf { it.isNotBlank() },
+                    vipTierName = item.optText("vipTierName").takeIf { it.isNotBlank() },
                     premium = item.optBoolean("premium"),
                     verified = item.optBoolean("verified"),
                     distanceKm = if (item.isNull("distanceKm")) null else item.optInt("distanceKm"),
                     online = item.optBoolean("online"),
-                    city = item.optString("city"),
-                    gender = item.optString("gender").ifBlank { "Not specified" },
+                    city = item.optText("city"),
+                    gender = item.optText("gender").ifBlank { "Not specified" },
                     interests = item.optJSONArray("interests").toStringList(),
+                    friend = item.optBoolean("friend", false),
                 )
             }
         }
@@ -719,6 +985,37 @@ class NovaBackendClient(
             page = data.optInt("page", 0),
             size = data.optInt("size", items.size.coerceAtLeast(20)),
             total = data.optLong("total", items.size.toLong()),
+        )
+    }
+
+    private fun parseDiscover(data: JSONObject): BackendDiscoverResponse {
+        val items = mutableListOf<BackendDiscoveryCandidate>()
+        val array = data.optJSONArray("items")
+        if (array != null) {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val user = item.optJSONObject("user") ?: continue
+                items += BackendDiscoveryCandidate(
+                    candidateId = item.optText("candidateId").ifBlank { user.optText("userId") },
+                    user = parseChatParticipant(user),
+                    bio = item.optText("bio"),
+                    compatibility = item.optInt("compatibility"),
+                    commonInterests = item.optJSONArray("commonInterests").toStringList(),
+                    iceBreaker = item.optText("iceBreaker"),
+                    mutualFriends = item.optInt("mutualFriends"),
+                    musicTaste = item.optText("musicTaste"),
+                    height = item.optText("height"),
+                    job = item.optText("job"),
+                    relationshipGoal = item.optText("relationshipGoal"),
+                    gallery = item.optJSONArray("gallery").toResolvedMediaUrlList(),
+                    voiceIntro = item.optBoolean("voiceIntro", true),
+                    videoIntro = item.optBoolean("videoIntro", true),
+                )
+            }
+        }
+        return BackendDiscoverResponse(
+            items = items,
+            filters = data.optJSONArray("filters").toStringList(),
         )
     }
 
@@ -751,40 +1048,50 @@ class NovaBackendClient(
         return items
     }
 
+    private fun parseChatThreadPage(data: JSONObject): BackendChatThreadPage {
+        val items = parseChatThreads(data.optJSONArray("items"))
+        return BackendChatThreadPage(
+            items = items,
+            page = data.optInt("page", 0),
+            size = data.optInt("size", items.size.coerceAtLeast(10)),
+            total = data.optLong("total", items.size.toLong()),
+        )
+    }
+
     private fun parseChatThread(item: JSONObject): BackendChatThread? {
         val participant = item.optJSONObject("participant") ?: return null
         return BackendChatThread(
-            id = item.optString("id"),
-            type = item.optString("type"),
+            id = item.optText("id"),
+            type = item.optText("type"),
             participant = parseChatParticipant(participant),
-            lastMessage = item.optString("lastMessage"),
+            lastMessage = item.optText("lastMessage"),
             unreadCount = item.optInt("unreadCount"),
             online = item.optBoolean("online"),
             typing = item.optBoolean("typing"),
             pinned = item.optBoolean("pinned"),
-            matchLabel = item.optString("matchLabel"),
-            updatedAt = item.optString("updatedAt"),
+            matchLabel = item.optText("matchLabel"),
+            updatedAt = item.optText("updatedAt"),
         )
     }
 
     private fun parseChatParticipant(item: JSONObject): BackendPublicUserCard {
         return BackendPublicUserCard(
-            userId = item.optString("userId"),
-            publicId = item.optString("publicId"),
-            displayName = item.optString("displayName"),
-            username = item.optString("username"),
-            bio = item.optString("bio"),
+            userId = item.optText("userId"),
+            publicId = item.optText("publicId"),
+            displayName = item.optText("displayName"),
+            username = item.optText("username"),
+            bio = item.optText("bio"),
             age = item.optInt("age"),
-            avatarUrl = item.optString("avatarUrl"),
-            featuredPhotos = item.optJSONArray("featuredPhotos").toStringList(),
-            vipTierId = item.optString("vipTierId").takeIf { it.isNotBlank() },
-            vipTierName = item.optString("vipTierName").takeIf { it.isNotBlank() },
+            avatarUrl = resolvedBackendMediaUrl(item.optText("avatarUrl")),
+            featuredPhotos = item.optJSONArray("featuredPhotos").toResolvedMediaUrlList(),
+            vipTierId = item.optText("vipTierId").takeIf { it.isNotBlank() },
+            vipTierName = item.optText("vipTierName").takeIf { it.isNotBlank() },
             verified = item.optBoolean("verified"),
             premium = item.optBoolean("premium"),
             distanceKm = if (item.isNull("distanceKm")) null else item.optInt("distanceKm"),
             online = item.optBoolean("online"),
-            city = item.optString("city"),
-            gender = item.optString("gender").ifBlank { "Not specified" },
+            city = item.optText("city"),
+            gender = item.optText("gender").ifBlank { "Not specified" },
             interests = item.optJSONArray("interests").toStringList(),
             followersCount = item.optInt("followersCount"),
             followingCount = item.optInt("followingCount"),
@@ -801,7 +1108,7 @@ class NovaBackendClient(
             thread = thread,
             messages = parseChatMessages(data.optJSONArray("messages")),
             hasMore = data.optBoolean("hasMore"),
-            nextCursor = data.optString("nextCursor").takeIf { it.isNotBlank() },
+            nextCursor = data.optText("nextCursor").takeIf { it.isNotBlank() },
         )
     }
 
@@ -818,29 +1125,34 @@ class NovaBackendClient(
     }
 
     private fun parseChatMessage(item: JSONObject): BackendChatMessage? {
-        val id = item.optString("id")
+        val id = item.optText("id")
         if (id.isBlank()) {
             return null
         }
+        val attachmentUrl = item.optCleanString("attachmentUrl")
+        val attachmentPreviewUrl = item.optCleanString("attachmentPreviewUrl")
         return BackendChatMessage(
             id = id,
-            threadId = item.optString("threadId"),
-            text = item.optString("text"),
+            threadId = item.optText("threadId"),
+            text = item.optCleanString("text").orEmpty(),
             sentByMe = item.optBoolean("sentByMe"),
-            timeLabel = item.optString("timeLabel"),
+            timeLabel = item.optCleanString("timeLabel").orEmpty(),
+            createdAt = item.optCleanString("createdAt"),
             isVoice = item.optBoolean("isVoice"),
             isGif = item.optBoolean("isGif"),
             isSticker = item.optBoolean("isSticker"),
-            attachmentKind = item.optString("attachmentKind").takeIf { it.isNotBlank() },
-            attachmentUrl = item.optString("attachmentUrl").takeIf { it.isNotBlank() },
-            attachmentPreviewUrl = item.optString("attachmentPreviewUrl").takeIf { it.isNotBlank() },
-            attachmentMimeType = item.optString("attachmentMimeType").takeIf { it.isNotBlank() },
-            attachmentName = item.optString("attachmentName").takeIf { it.isNotBlank() },
+            attachmentKind = item.optCleanString("attachmentKind"),
+            attachmentUrl = resolvedBackendMediaUrl(attachmentUrl),
+            attachmentPreviewUrl = resolvedBackendMediaUrl(attachmentPreviewUrl),
+            attachmentMimeType = item.optCleanString("attachmentMimeType"),
+            attachmentName = item.optCleanString("attachmentName"),
             attachmentDurationSeconds = if (item.isNull("attachmentDurationSeconds")) null else item.optInt("attachmentDurationSeconds"),
-            translatedText = item.optString("translatedText").takeIf { it.isNotBlank() },
+            attachmentWidth = if (item.isNull("attachmentWidth")) null else item.optInt("attachmentWidth"),
+            attachmentHeight = if (item.isNull("attachmentHeight")) null else item.optInt("attachmentHeight"),
+            translatedText = item.optCleanString("translatedText"),
             isRead = item.optBoolean("isRead"),
             callSummary = item.optJSONObject("callSummary")?.toCallSummary(),
-            status = item.optString("status").ifBlank { "SENT" },
+            status = item.optCleanString("status") ?: "SENT",
         )
     }
 
@@ -852,15 +1164,137 @@ class NovaBackendClient(
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
             items += BackendNotification(
-                id = item.optString("id"),
-                kind = item.optString("kind"),
-                threadId = item.optString("threadId").takeIf { it.isNotBlank() },
-                title = item.optString("title"),
-                body = item.optString("body"),
-                timeLabel = item.optString("timeLabel"),
+                id = item.optText("id"),
+                kind = item.optText("kind"),
+                threadId = item.optText("threadId").takeIf { it.isNotBlank() },
+                title = item.optText("title"),
+                body = item.optText("body"),
+                timeLabel = item.optText("timeLabel"),
                 read = item.optBoolean("read"),
-                actionTarget = item.optString("actionTarget").takeIf { it.isNotBlank() },
+                actionTarget = item.optText("actionTarget").takeIf { it.isNotBlank() },
             )
+        }
+        return items
+    }
+
+    private fun parseCommerceCatalog(data: JSONObject): BackendCommerceCatalog {
+        return BackendCommerceCatalog(
+            vipTiers = data.optJSONArray("vipTiers").toVipTiers(),
+            diamondPackages = data.optJSONArray("diamondPackages").toDiamondPackages(),
+            paymentProviders = data.optJSONArray("paymentProviders").toPaymentProviders(),
+        )
+    }
+
+    private fun parseCommerceMe(data: JSONObject): BackendCommerceMe {
+        return BackendCommerceMe(
+            userId = data.optText("userId"),
+            vipActive = data.optBoolean("vipActive"),
+            vipTierId = data.optText("vipTierId").takeIf { it.isNotBlank() },
+            vipTierName = data.optText("vipTierName").takeIf { it.isNotBlank() },
+            vipExpiresAt = data.optText("vipExpiresAt").takeIf { it.isNotBlank() },
+            diamondBalance = data.optLong("diamondBalance", 0L),
+            activeBenefits = data.optJSONArray("activeBenefits").toStringList(),
+            recentOrders = data.optJSONArray("recentOrders").toCommerceOrders(),
+        )
+    }
+
+    private fun parseCommerceOrder(data: JSONObject): BackendCommerceOrder {
+        return BackendCommerceOrder(
+            orderId = data.optText("orderId"),
+            userId = data.optText("userId"),
+            purchaseType = data.optText("purchaseType"),
+            productId = data.optText("productId"),
+            productName = data.optText("productName"),
+            productSubtitle = data.optText("productSubtitle"),
+            amount = data.optInt("amount"),
+            currency = data.optText("currency"),
+            status = data.optText("status"),
+            provider = data.optText("provider"),
+            checkoutUrl = data.optText("checkoutUrl").takeIf { it.isNotBlank() },
+            qrContent = data.optText("qrContent").takeIf { it.isNotBlank() },
+            expiresAt = data.optText("expiresAt").takeIf { it.isNotBlank() },
+            grant = data.optJSONObject("grant")?.let(::parseCommerceGrant),
+            transactionId = data.optText("transactionId").takeIf { it.isNotBlank() },
+            failureReason = data.optText("failureReason").takeIf { it.isNotBlank() },
+        )
+    }
+
+    private fun parseCommerceGrant(data: JSONObject): BackendCommerceGrant {
+        return BackendCommerceGrant(
+            grantType = data.optText("grantType"),
+            vipTierId = data.optText("vipTierId").takeIf { it.isNotBlank() },
+            vipTierName = data.optText("vipTierName").takeIf { it.isNotBlank() },
+            vipExpiresAt = data.optText("vipExpiresAt").takeIf { it.isNotBlank() },
+            diamondsAdded = if (data.isNull("diamondsAdded")) null else data.optInt("diamondsAdded"),
+            diamondBalanceAfter = if (data.isNull("diamondBalanceAfter")) null else data.optLong("diamondBalanceAfter"),
+            benefits = data.optJSONArray("benefits").toStringList(),
+        )
+    }
+
+    private fun JSONArray?.toVipTiers(): List<BackendVipTier> {
+        if (this == null || length() == 0) return emptyList()
+        val items = mutableListOf<BackendVipTier>()
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            items += BackendVipTier(
+                id = item.optText("id"),
+                name = item.optText("name"),
+                level = item.optInt("level"),
+                price = item.optText("price"),
+                cycle = item.optText("cycle"),
+                subtitle = item.optText("subtitle"),
+                badgeLabel = item.optText("badgeLabel"),
+                features = item.optJSONArray("features").toStringList(),
+                highlighted = item.optBoolean("highlighted"),
+                accentColor = item.optText("accentColor"),
+                durationDays = item.optInt("durationDays", 30),
+            )
+        }
+        return items
+    }
+
+    private fun JSONArray?.toDiamondPackages(): List<BackendDiamondPackage> {
+        if (this == null || length() == 0) return emptyList()
+        val items = mutableListOf<BackendDiamondPackage>()
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            items += BackendDiamondPackage(
+                id = item.optText("id"),
+                name = item.optText("name"),
+                diamonds = item.optInt("diamonds"),
+                price = item.optText("price"),
+                subtitle = item.optText("subtitle"),
+                bonusLabel = item.optText("bonusLabel"),
+                bestValue = item.optBoolean("bestValue"),
+                accentColor = item.optText("accentColor"),
+            )
+        }
+        return items
+    }
+
+    private fun JSONArray?.toPaymentProviders(): List<BackendPaymentProvider> {
+        if (this == null || length() == 0) return emptyList()
+        val items = mutableListOf<BackendPaymentProvider>()
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            items += BackendPaymentProvider(
+                id = item.optText("id"),
+                name = item.optText("name"),
+                subtitle = item.optText("subtitle"),
+                available = item.optBoolean("available"),
+                recommended = item.optBoolean("recommended"),
+                capabilities = item.optJSONArray("capabilities").toStringList(),
+            )
+        }
+        return items
+    }
+
+    private fun JSONArray?.toCommerceOrders(): List<BackendCommerceOrder> {
+        if (this == null || length() == 0) return emptyList()
+        val items = mutableListOf<BackendCommerceOrder>()
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            items += parseCommerceOrder(item)
         }
         return items
     }
@@ -872,8 +1306,8 @@ class NovaBackendClient(
             events = parseCommunityEvents(data.optJSONArray("events")),
             trendingTags = data.optJSONArray("trendingTags").toStringList(),
             postTypes = data.optJSONArray("postTypes").toStringList(),
-            refreshToken = data.optString("refreshToken"),
-            nextCursor = data.optString("nextCursor").takeIf { it.isNotBlank() },
+            refreshToken = data.optText("refreshToken"),
+            nextCursor = data.optText("nextCursor").takeIf { it.isNotBlank() },
             hasMore = data.optBoolean("hasMore", false),
         )
     }
@@ -886,12 +1320,12 @@ class NovaBackendClient(
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
             items += BackendCommunityTopic(
-                id = item.optString("id"),
-                title = item.optString("title"),
-                description = item.optString("description"),
-                bannerUrl = item.optString("bannerUrl"),
-                members = item.optString("members"),
-                moderator = item.optString("moderator"),
+                id = item.optText("id"),
+                title = item.optText("title"),
+                description = item.optText("description"),
+                bannerUrl = item.optText("bannerUrl"),
+                members = item.optText("members"),
+                moderator = item.optText("moderator"),
                 eventCount = item.optInt("eventCount"),
                 joined = item.optBoolean("joined"),
             )
@@ -907,14 +1341,14 @@ class NovaBackendClient(
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
             items += BackendCommunityEvent(
-                id = item.optString("id"),
-                title = item.optString("title"),
-                kind = item.optString("kind"),
-                dateLabel = item.optString("dateLabel"),
-                location = item.optString("location"),
-                price = item.optString("price"),
-                bannerUrl = item.optString("bannerUrl"),
-                attendees = item.optString("attendees"),
+                id = item.optText("id"),
+                title = item.optText("title"),
+                kind = item.optText("kind"),
+                dateLabel = item.optText("dateLabel"),
+                location = item.optText("location"),
+                price = item.optText("price"),
+                bannerUrl = item.optText("bannerUrl"),
+                attendees = item.optText("attendees"),
                 joined = item.optBoolean("joined"),
             )
         }
@@ -936,34 +1370,40 @@ class NovaBackendClient(
     private fun parseCommunityPost(item: JSONObject): BackendCommunityPost {
         val author = item.optJSONObject("author")
         val comments = item.optJSONArray("commentsPreview").toCommunityComments()
+        val rawMediaUrl = item.optText("mediaUrl").takeIf { it.isNotBlank() }
+        val rawMediaUrls = item.optJSONArray("mediaUrls").toStringList().ifEmpty {
+            rawMediaUrl?.let { listOf(it) } ?: emptyList()
+        }
+        val mediaUrls = rawMediaUrls.mapNotNull { resolveBackendMediaUrl(it) }.distinct()
         return BackendCommunityPost(
-            id = item.optString("id"),
-            topicId = item.optString("topicId"),
-            postType = item.optString("postType").ifBlank { "TEXT" },
-            authorId = author?.optString("userId").orEmpty(),
-            authorName = author?.optString("displayName").orEmpty(),
-            authorAvatarUrl = author?.optString("avatarUrl").orEmpty(),
-            authorVipTierId = author?.optString("vipTierId")?.takeIf { it.isNotBlank() },
-            authorVipTierName = author?.optString("vipTierName")?.takeIf { it.isNotBlank() },
+            id = item.optText("id"),
+            topicId = item.optText("topicId"),
+            postType = item.optText("postType").ifBlank { "TEXT" },
+            authorId = author?.optText("userId").orEmpty(),
+            authorPublicId = author?.optText("publicId").orEmpty(),
+            authorName = author?.optText("displayName").orEmpty(),
+            authorAvatarUrl = resolvedBackendMediaUrl(author?.optText("avatarUrl")),
+            authorVipTierId = author?.optText("vipTierId")?.takeIf { it.isNotBlank() },
+            authorVipTierName = author?.optText("vipTierName")?.takeIf { it.isNotBlank() },
             authorPremium = author?.optBoolean("premium") == true,
             authorVerified = author?.optBoolean("verified") == true,
             authorOnline = author?.optBoolean("online") == true,
-            authorCity = author?.optString("city").orEmpty(),
-            text = item.optString("text"),
-            mediaUrl = item.optString("mediaUrl").takeIf { it.isNotBlank() },
-            mediaUrls = item.optJSONArray("mediaUrls").toStringList().ifEmpty {
-                item.optString("mediaUrl").takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList()
-            },
-            thumbnailUrl = item.optString("thumbnailUrl").takeIf { it.isNotBlank() },
+            authorCity = author?.optText("city").orEmpty(),
+            text = item.optText("text"),
+            mediaUrl = resolveBackendMediaUrl(rawMediaUrl) ?: mediaUrls.firstOrNull(),
+            mediaUrls = mediaUrls,
+            thumbnailUrl = resolveBackendMediaUrl(item.optText("thumbnailUrl").takeIf { it.isNotBlank() }),
             tags = item.optJSONArray("tags").toStringList(),
             mentionedUserIds = item.optJSONArray("mentionedUserIds").toStringList(),
+            mentions = item.optJSONArray("mentions").toCommunityMentions(),
             likes = item.optInt("likes"),
             comments = item.optInt("comments"),
             commentsPreview = comments,
             shares = item.optInt("shares"),
             likedByMe = item.optBoolean("likedByMe"),
             sharedByMe = item.optBoolean("sharedByMe"),
-            timeLabel = item.optString("timeLabel"),
+            timeLabel = item.optText("timeLabel"),
+            createdAt = item.optText("createdAt"),
         )
     }
 
@@ -976,21 +1416,47 @@ class NovaBackendClient(
             val item = optJSONObject(index) ?: continue
             val author = item.optJSONObject("author")
             items += BackendCommunityComment(
-                id = item.optString("id"),
-                postId = item.optString("postId"),
-                authorId = author?.optString("userId").orEmpty(),
-                authorName = author?.optString("displayName").orEmpty(),
-                authorAvatarUrl = author?.optString("avatarUrl").orEmpty(),
-                authorVipTierId = author?.optString("vipTierId")?.takeIf { it.isNotBlank() },
-                authorVipTierName = author?.optString("vipTierName")?.takeIf { it.isNotBlank() },
+                id = item.optText("id"),
+                postId = item.optText("postId"),
+                authorId = author?.optText("userId").orEmpty(),
+                authorPublicId = author?.optText("publicId").orEmpty(),
+                authorName = author?.optText("displayName").orEmpty(),
+                authorAvatarUrl = resolvedBackendMediaUrl(author?.optText("avatarUrl")),
+                authorVipTierId = author?.optText("vipTierId")?.takeIf { it.isNotBlank() },
+                authorVipTierName = author?.optText("vipTierName")?.takeIf { it.isNotBlank() },
                 authorPremium = author?.optBoolean("premium") == true,
-                text = item.optString("text"),
-                timeLabel = item.optString("timeLabel"),
+                text = item.optText("text"),
+                timeLabel = item.optText("timeLabel"),
+                createdAt = item.optText("createdAt"),
                 mine = item.optBoolean("mine"),
                 mentionedUserIds = item.optJSONArray("mentionedUserIds").toStringList(),
+                mentions = item.optJSONArray("mentions").toCommunityMentions(),
             )
         }
         return items
+    }
+
+    private fun JSONArray?.toCommunityMentions(): List<BackendCommunityMention> {
+        if (this == null || length() == 0) {
+            return emptyList()
+        }
+        val items = mutableListOf<BackendCommunityMention>()
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            val userId = item.optText("userId")
+            if (userId.isBlank()) continue
+            items += BackendCommunityMention(
+                userId = userId,
+                displayName = item.optText("displayName"),
+                username = item.optText("username"),
+                avatarUrl = resolvedBackendMediaUrl(item.optText("avatarUrl")),
+            )
+        }
+        return items.distinctBy { it.userId }
+    }
+
+    private fun JSONArray?.toResolvedMediaUrlList(): List<String> {
+        return toStringList().map(::resolvedBackendMediaUrl).filter { it.isNotBlank() }.distinct()
     }
 
     private fun JSONArray?.toStringList(): List<String> {
@@ -1007,6 +1473,20 @@ class NovaBackendClient(
         return items.distinct()
     }
 
+    private fun resolvedBackendMediaUrl(value: String?): String {
+        return resolveBackendMediaUrl(value) ?: value.orEmpty()
+    }
+
+    private fun resolveBackendMediaUrl(value: String?): String? {
+        val url = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return when {
+            url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> url
+            url.startsWith("content://", ignoreCase = true) || url.startsWith("file://", ignoreCase = true) -> url
+            url.startsWith("/") -> baseUrl.trimEnd('/') + url
+            else -> baseUrl.trimEnd('/') + "/" + url.trimStart('/')
+        }
+    }
+
     private fun encode(value: String): String {
         return URLEncoder.encode(value, StandardCharsets.UTF_8.name())
     }
@@ -1014,13 +1494,13 @@ class NovaBackendClient(
     private fun parseCallSession(json: JSONObject): BackendCallSession {
         val data = json.optJSONObject("data") ?: json
         val summaryJson = data.optJSONObject("summary")
-        val callId = data.optString("id")
-        val threadId = data.optString("threadId")
+        val callId = data.optText("id")
+        val threadId = data.optText("threadId")
         return BackendCallSession(
             callId = callId,
             threadId = threadId,
             summary = summaryJson?.toCallSummary(fallbackThreadId = threadId, fallbackCallId = callId),
-            status = data.optString("status"),
+            status = data.optText("status"),
             minimized = data.optBoolean("minimized"),
         )
     }
@@ -1029,21 +1509,26 @@ class NovaBackendClient(
         fallbackThreadId: String = "",
         fallbackCallId: String? = null,
     ): CallSummaryUiState? {
-        val participantName = optString("participantName").takeIf { it.isNotBlank() } ?: return null
+        val participantName = optText("participantName").takeIf { it.isNotBlank() } ?: return null
         return CallSummaryUiState(
             participantName = participantName,
-            threadId = optString("threadId").ifBlank { fallbackThreadId },
-            callId = optString("callId").takeIf { it.isNotBlank() } ?: fallbackCallId,
-            callType = when (optString("callType").uppercase()) {
+            threadId = optText("threadId").ifBlank { fallbackThreadId },
+            peerUserId = optText("peerUserId")
+                .ifBlank { optText("partnerId") }
+                .ifBlank { optText("callerId") },
+            callId = optText("callId")
+                .ifBlank { optText("id") }
+                .takeIf { it.isNotBlank() } ?: fallbackCallId,
+            callType = when (optText("callType").uppercase()) {
                 "VIDEO" -> CallType.Video
                 else -> CallType.Voice
             },
-            direction = when (optString("direction").uppercase()) {
+            direction = when (optText("direction").uppercase()) {
                 "INCOMING" -> CallDirection.Incoming
                 else -> CallDirection.Outgoing
             },
             durationSeconds = optInt("durationSeconds"),
-            endReason = when (optString("endReason").uppercase()) {
+            endReason = when (optText("endReason").uppercase()) {
                 "MISSED" -> CallEndReason.Missed
                 "NO_ANSWER" -> CallEndReason.NoAnswer
                 "DECLINED" -> CallEndReason.Declined
@@ -1054,10 +1539,10 @@ class NovaBackendClient(
                 "COMPLETED" -> CallEndReason.Completed
                 else -> CallEndReason.HungUp
             },
-            startedAtLabel = optString("startedAtLabel"),
-            endedAtLabel = optString("endedAtLabel"),
+            startedAtLabel = optText("startedAtLabel"),
+            endedAtLabel = optText("endedAtLabel"),
             isMicOn = optBoolean("isMicOn", true),
-            isVideoOn = optBoolean("isVideoOn", optString("callType").equals("VIDEO", ignoreCase = true)),
+            isVideoOn = optBoolean("isVideoOn", optText("callType").equals("VIDEO", ignoreCase = true)),
         )
     }
 
@@ -1067,11 +1552,11 @@ class NovaBackendClient(
         if (array != null) {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                val url = item.optString("url").takeIf { it.isNotBlank() } ?: continue
+                val url = item.optText("url").takeIf { it.isNotBlank() } ?: continue
                 iceServers += BackendIceServer(
                     url = url,
-                    username = item.optString("username").takeIf { it.isNotBlank() },
-                    credential = item.optString("credential").takeIf { it.isNotBlank() },
+                    username = item.optText("username").takeIf { it.isNotBlank() },
+                    credential = item.optText("credential").takeIf { it.isNotBlank() },
                 )
             }
         }
@@ -1094,4 +1579,26 @@ class NovaBackendClient(
                 .build()
         }
     }
+}
+
+private fun JSONObject.optCleanString(name: String): String? {
+    if (!has(name) || isNull(name)) {
+        return null
+    }
+    return optString(name).takeUnless { it.isBlank() || it.equals("null", ignoreCase = true) }
+}
+
+/** Like optString, but JSON null (which org.json turns into the text "null") becomes "". */
+private fun JSONObject.optText(name: String): String = optCleanString(name).orEmpty()
+
+/** Backend enum: COMPLETED, MISSED, NO_ANSWER, DECLINED, REJECTED, BUSY, CANCELED, DROPPED. */
+private fun CallEndReason.toBackendValue(): String = when (this) {
+    CallEndReason.HungUp, CallEndReason.Completed -> "COMPLETED"
+    CallEndReason.NoAnswer -> "NO_ANSWER"
+    CallEndReason.Canceled -> "CANCELED"
+    CallEndReason.Declined -> "DECLINED"
+    CallEndReason.Rejected -> "REJECTED"
+    CallEndReason.Missed -> "MISSED"
+    CallEndReason.Busy -> "BUSY"
+    CallEndReason.Dropped -> "DROPPED"
 }

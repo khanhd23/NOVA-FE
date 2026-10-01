@@ -3,6 +3,7 @@ package com.nova.app.core.backend
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.nova.app.core.media.createVideoThumbnailJpegBytes
 import com.nova.app.core.model.CallDirection
 import com.nova.app.core.model.CallEndReason
 import com.nova.app.core.model.CallType
@@ -42,13 +43,23 @@ interface BackendRuntime {
     suspend fun fetchPublicProfile(userId: String): BackendProfile?
     suspend fun fetchProfileRelations(userId: String, relation: String, page: Int = 0, size: Int = 50): BackendProfilePage?
     suspend fun searchUsers(query: String, page: Int = 0, size: Int = 20, gender: String? = null, interest: String? = null): BackendSearchPage?
+    suspend fun fetchDiscover(gender: String? = null, minAge: Int? = null, maxAge: Int? = null, excludeIds: List<String> = emptyList()): BackendDiscoverResponse?
+    suspend fun swipeDiscoverCandidate(candidateId: String, direction: String): BackendSwipeResponse?
+    suspend fun pokeDiscoverCandidate(candidateId: String): BackendPokeResponse?
     suspend fun fetchNotifications(): List<BackendNotification>?
     suspend fun markNotificationRead(notificationId: String): List<BackendNotification>?
+    suspend fun markAllNotificationsRead(): List<BackendNotification>?
+    suspend fun fetchCommerceCatalog(): BackendCommerceCatalog?
+    suspend fun fetchCommerceMe(): BackendCommerceMe?
+    suspend fun createCommerceOrder(productId: String, purchaseType: String, provider: String = "DEMO"): BackendCommerceOrder?
+    suspend fun confirmCommerceOrder(orderId: String, success: Boolean, transactionId: String, message: String): BackendCommerceOrder?
     suspend fun fetchCommunityFeed(tab: String = "for_you", cursor: String? = null, refresh: Boolean = false, size: Int = 10): BackendCommunityFeed?
     suspend fun fetchProfilePosts(userId: String, size: Int = 30): List<BackendCommunityPost>?
+    suspend fun searchCommunityPosts(query: String, page: Int = 0, size: Int = 10): BackendCommunityPostPage?
     suspend fun createCommunityPost(request: BackendCommunityPostRequest): BackendCommunityPost?
     suspend fun likeCommunityPost(postId: String, liked: Boolean = true): BackendCommunityPost?
     suspend fun commentCommunityPost(postId: String, request: BackendCommunityCommentRequest): BackendCommunityPost?
+    suspend fun fetchCommunityComments(postId: String, page: Int = 0, size: Int = 20): BackendCommunityCommentPage?
     suspend fun shareCommunityPost(postId: String, request: BackendCommunityShareRequest): BackendCommunityShareResponse?
     suspend fun fetchCommunityTags(query: String = "", limit: Int = 8): List<BackendCommunityTagSuggestion>?
     suspend fun fetchRealtimeConfig(): BackendRealtimeConfig?
@@ -56,6 +67,7 @@ interface BackendRuntime {
     suspend fun updateProfile(request: BackendProfileUpdateRequest): BackendProfile?
     suspend fun toggleFollow(userId: String, followed: Boolean): BackendProfile?
     suspend fun fetchThreads(): List<BackendChatThread>?
+    suspend fun searchChatThreads(query: String, page: Int = 0, size: Int = 10): BackendChatThreadPage?
     suspend fun fetchThread(threadId: String, limit: Int = 20, before: String? = null): BackendThreadDetailResponse?
     suspend fun startCall(threadId: String, callType: CallType, direction: CallDirection = CallDirection.Outgoing, peerUserId: String = ""): BackendCallSession?
     suspend fun answerCall(callId: String): BackendCallSession?
@@ -63,10 +75,17 @@ interface BackendRuntime {
     suspend fun minimizeCall(callId: String, minimized: Boolean): BackendCallSession?
     suspend fun sendCallSignal(signal: BackendCallSignal): Boolean
     suspend fun sendMessage(threadId: String, text: String, attachment: BackendMessageAttachment? = null): BackendChatMessage?
+    suspend fun deleteThreadForMe(threadId: String): Boolean
+    suspend fun deleteMessageForMe(threadId: String, messageId: String): Boolean
+    suspend fun recallMessage(threadId: String, messageId: String): BackendChatMessage?
+    suspend fun editMessage(threadId: String, messageId: String, text: String): BackendChatMessage?
     suspend fun setTyping(threadId: String, typing: Boolean)
     suspend fun markThreadRead(threadId: String)
     fun onPushTokenRefreshed(token: String)
     fun currentSession(): BackendSession?
+
+    /** Emits when the refresh token is rejected and the user has to sign in again. */
+    val sessionExpired: SharedFlow<Unit>
 }
 
 class DefaultBackendRuntime(
@@ -86,6 +105,30 @@ class DefaultBackendRuntime(
     private var realtimeSocket: WebSocket? = null
 
     override val session: StateFlow<BackendSession?> = _session.asStateFlow()
+
+    private val _sessionExpired = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
+
+    init {
+        client.tokenStore = object : SessionTokenStore {
+            override fun currentAccessToken(): String? = _session.value?.accessToken
+
+            override fun currentRefreshToken(): String? = _session.value?.refreshToken
+
+            override fun onTokensRefreshed(accessToken: String, refreshToken: String) {
+                val current = _session.value ?: return
+                val updated = current.copy(accessToken = accessToken, refreshToken = refreshToken)
+                _session.value = updated
+                appContext?.let { BackendSessionStore.saveSession(it, updated) }
+            }
+
+            override fun onSessionExpired() {
+                if (_session.value == null) return
+                signOut()
+                _sessionExpired.tryEmit(Unit)
+            }
+        }
+    }
     override val events: SharedFlow<BackendRealtimeEvent> = _events.asSharedFlow()
 
     override fun initialize(context: Context) {
@@ -172,6 +215,36 @@ class DefaultBackendRuntime(
         }
     }
 
+    override suspend fun fetchDiscover(gender: String?, minAge: Int?, maxAge: Int?, excludeIds: List<String>): BackendDiscoverResponse? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.fetchDiscover(session.accessToken, gender, minAge, maxAge, excludeIds)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to fetch discover: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun swipeDiscoverCandidate(candidateId: String, direction: String): BackendSwipeResponse? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.swipeDiscoverCandidate(session.accessToken, candidateId, direction)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to swipe discover candidate: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun pokeDiscoverCandidate(candidateId: String): BackendPokeResponse? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.pokeDiscoverCandidate(session.accessToken, candidateId)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to poke discover candidate: ${throwable.message}")
+            null
+        }
+    }
+
     override suspend fun fetchNotifications(): List<BackendNotification>? {
         val session = _session.value ?: return null
         return runCatching {
@@ -192,6 +265,64 @@ class DefaultBackendRuntime(
         }
     }
 
+    override suspend fun markAllNotificationsRead(): List<BackendNotification>? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.markAllNotificationsRead(session.accessToken)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to mark all notifications read: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun fetchCommerceCatalog(): BackendCommerceCatalog? {
+        return runCatching {
+            client.fetchCommerceCatalog()
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to fetch commerce catalog: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun fetchCommerceMe(): BackendCommerceMe? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.fetchCommerceMe(session.accessToken)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to fetch commerce state: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun createCommerceOrder(
+        productId: String,
+        purchaseType: String,
+        provider: String,
+    ): BackendCommerceOrder? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.createCommerceOrder(session.accessToken, productId, purchaseType, provider)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to create commerce order: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun confirmCommerceOrder(
+        orderId: String,
+        success: Boolean,
+        transactionId: String,
+        message: String,
+    ): BackendCommerceOrder? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.confirmCommerceOrder(session.accessToken, orderId, success, transactionId, message)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to confirm commerce order: ${throwable.message}")
+            null
+        }
+    }
+
     override suspend fun fetchCommunityFeed(tab: String, cursor: String?, refresh: Boolean, size: Int): BackendCommunityFeed? {
         val session = _session.value ?: return null
         return runCatching {
@@ -208,6 +339,16 @@ class DefaultBackendRuntime(
             client.fetchProfilePosts(session.accessToken, userId, size)
         }.getOrElse { throwable ->
             Log.w("NovaBackend", "Failed to fetch profile posts: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun searchCommunityPosts(query: String, page: Int, size: Int): BackendCommunityPostPage? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.searchCommunityPosts(session.accessToken, query, page, size)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to search community posts: ${throwable.message}")
             null
         }
     }
@@ -238,6 +379,16 @@ class DefaultBackendRuntime(
             client.commentCommunityPost(session.accessToken, postId, request)
         }.getOrElse { throwable ->
             Log.w("NovaBackend", "Failed to comment community post: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun fetchCommunityComments(postId: String, page: Int, size: Int): BackendCommunityCommentPage? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.fetchCommunityComments(session.accessToken, postId, page, size)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to fetch community comments: ${throwable.message}")
             null
         }
     }
@@ -277,6 +428,15 @@ class DefaultBackendRuntime(
         val context = requireContext()
         return runCatching {
             val bytes = readBytes(context, request.uri) ?: return@runCatching null
+            val previewUrl = request.previewUrl ?: if (request.kind == ChatAttachmentKind.Video) {
+                uploadGeneratedVideoPreview(
+                    accessToken = session.accessToken,
+                    context = context,
+                    request = request,
+                )
+            } else {
+                null
+            }
             client.uploadMedia(
                 accessToken = session.accessToken,
                 fileName = request.fileName,
@@ -284,7 +444,7 @@ class DefaultBackendRuntime(
                 kind = request.kind.name.lowercase(Locale.ROOT),
                 title = request.title,
                 fileBytes = bytes,
-                previewUrl = request.previewUrl,
+                previewUrl = previewUrl,
             )
         }.getOrElse { throwable ->
             Log.w("NovaBackend", "Failed to upload media: ${throwable.message}")
@@ -294,17 +454,16 @@ class DefaultBackendRuntime(
 
     override suspend fun updateProfile(request: BackendProfileUpdateRequest): BackendProfile? {
         val session = _session.value ?: return null
+        // Propagate failures so the caller can show an error instead of
+        // marking the profile complete while the server never saved it.
         val profile = runCatching {
             client.updateProfile(session.accessToken, request)
+                ?: throw java.io.IOException("Profile update returned no data")
         }.getOrElse { throwable ->
             Log.w("NovaBackend", "Failed to update profile: ${throwable.message}")
-            null
+            throw throwable
         }
-        if (profile != null) {
-            persistSessionFromProfile(profile, forceProfileComplete = true)
-        } else {
-            persistSessionFromRequest(session, request)
-        }
+        persistSessionFromProfile(profile, forceProfileComplete = true)
         return profile
     }
 
@@ -324,6 +483,16 @@ class DefaultBackendRuntime(
             client.fetchThreads(session.accessToken)
         }.getOrElse { throwable ->
             Log.w("NovaBackend", "Failed to fetch threads: ${throwable.message}")
+            null
+        }
+    }
+
+    override suspend fun searchChatThreads(query: String, page: Int, size: Int): BackendChatThreadPage? {
+        val session = _session.value ?: return null
+        return runCatching {
+            client.searchChatThreads(session.accessToken, query, page, size)
+        }.getOrElse { throwable ->
+            Log.w("NovaBackend", "Failed to search chat threads: ${throwable.message}")
             null
         }
     }
@@ -422,6 +591,26 @@ class DefaultBackendRuntime(
         return client.sendMessage(session.accessToken, threadId, text, attachment)
     }
 
+    override suspend fun deleteThreadForMe(threadId: String): Boolean {
+        val session = _session.value ?: return false
+        return client.deleteThreadForMe(session.accessToken, threadId)
+    }
+
+    override suspend fun deleteMessageForMe(threadId: String, messageId: String): Boolean {
+        val session = _session.value ?: return false
+        return client.deleteMessageForMe(session.accessToken, threadId, messageId)
+    }
+
+    override suspend fun recallMessage(threadId: String, messageId: String): BackendChatMessage? {
+        val session = _session.value ?: return null
+        return client.recallMessage(session.accessToken, threadId, messageId)
+    }
+
+    override suspend fun editMessage(threadId: String, messageId: String, text: String): BackendChatMessage? {
+        val session = _session.value ?: return null
+        return client.editMessage(session.accessToken, threadId, messageId, text)
+    }
+
     override suspend fun setTyping(threadId: String, typing: Boolean) {
         val session = _session.value ?: return
         client.setTyping(session.accessToken, threadId, typing)
@@ -465,9 +654,12 @@ class DefaultBackendRuntime(
                     Log.w("NovaBackend", "Realtime closed: ${throwable.message}")
                     scope.launch {
                         delay(2_000)
-                        if (_session.value?.accessToken == session.accessToken && realtimeSocket == null) {
-                            reconnect(session)
-                        }
+                        val current = _session.value ?: return@launch
+                        if (realtimeSocket != null || current.userId != session.userId) return@launch
+                        // The handshake fails silently with an expired access token. A normal API call
+                        // goes through the token authenticator and refreshes it if needed.
+                        runCatching { client.fetchMe(current.accessToken) }
+                        _session.value?.let { latest -> if (realtimeSocket == null) reconnect(latest) }
                     }
                 }
             },
@@ -500,22 +692,11 @@ class DefaultBackendRuntime(
     ) {
         val current = _session.value ?: return
         val updated = current.copy(
+            publicId = profile.publicId.ifBlank { current.publicId },
             displayName = profile.displayName.ifBlank { current.displayName },
             avatarUrl = profile.avatarUrl.takeIf { it.isNotBlank() } ?: current.avatarUrl,
             onboardingComplete = profile.onboardingComplete || current.onboardingComplete,
             profileComplete = forceProfileComplete || profile.profileComplete || current.profileComplete,
-        )
-        if (updated != current) {
-            _session.value = updated
-            appContext?.let { BackendSessionStore.saveSession(it, updated) }
-        }
-    }
-
-    private fun persistSessionFromRequest(current: BackendSession, request: BackendProfileUpdateRequest) {
-        val updated = current.copy(
-            displayName = request.displayName.ifBlank { current.displayName },
-            avatarUrl = request.photoUrl?.takeIf { it.isNotBlank() } ?: current.avatarUrl,
-            profileComplete = true,
         )
         if (updated != current) {
             _session.value = updated
@@ -575,6 +756,25 @@ class DefaultBackendRuntime(
             context.contentResolver.openInputStream(uri)?.use { input ->
                 input.readBytes()
             }
+        }.getOrNull()
+    }
+
+    private suspend fun uploadGeneratedVideoPreview(
+        accessToken: String,
+        context: Context,
+        request: BackendMediaUploadRequest,
+    ): String? {
+        val thumbnailBytes = createVideoThumbnailJpegBytes(context, request.uri) ?: return null
+        val baseName = request.fileName.substringBeforeLast('.', request.fileName).ifBlank { "video" }
+        return runCatching {
+            client.uploadMedia(
+                accessToken = accessToken,
+                fileName = "$baseName-thumb.jpg",
+                mimeType = "image/jpeg",
+                kind = ChatAttachmentKind.Image.name.lowercase(Locale.ROOT),
+                title = "${request.title.ifBlank { "Video" }} thumbnail",
+                fileBytes = thumbnailBytes,
+            )?.url
         }.getOrNull()
     }
 }

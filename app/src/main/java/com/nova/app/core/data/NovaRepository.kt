@@ -1,10 +1,7 @@
 package com.nova.app.core.data
 
-import com.nova.app.core.designsystem.NovaIcons
-import com.nova.app.core.model.ActionKind
-import com.nova.app.core.model.AdminMetric
+import android.net.Uri
 import com.nova.app.core.model.AppSettings
-import com.nova.app.core.model.BadgeItem
 import com.nova.app.core.model.CallDirection
 import com.nova.app.core.model.CallEndReason
 import com.nova.app.core.model.CallSummaryUiState
@@ -16,29 +13,20 @@ import com.nova.app.core.model.ChatThread
 import com.nova.app.core.model.ChatUiState
 import com.nova.app.core.model.CommunityUiState
 import com.nova.app.core.model.CommunityComment
+import com.nova.app.core.model.CommunityMention
 import com.nova.app.core.model.CommunityPost
 import com.nova.app.core.model.CommunityTopic
-import com.nova.app.core.model.CompatibilityMetric
 import com.nova.app.core.model.DiscoverUiState
 import com.nova.app.core.model.DiscoveryCandidate
 import com.nova.app.core.model.EventItem
-import com.nova.app.core.model.FeedPost
 import com.nova.app.core.model.HomeUiState
 import com.nova.app.core.model.LaunchUiState
 import com.nova.app.core.model.MessagesUiState
 import com.nova.app.core.model.NotificationItem
-import com.nova.app.core.model.PremiumPlan
 import com.nova.app.core.model.ProfileUiState
-import com.nova.app.core.model.SampleMedia
 import com.nova.app.core.model.SafetyItem
-import com.nova.app.core.model.ScreenAction
-import com.nova.app.core.model.ScreenSpec
-import com.nova.app.core.model.SearchFilter
 import com.nova.app.core.model.SessionState
-import com.nova.app.core.model.StatCard
-import com.nova.app.core.model.StoryItem
 import com.nova.app.core.model.UserCard
-import com.nova.app.core.model.WalletEntry
 import com.nova.app.core.backend.BackendRealtimeEvent
 import com.nova.app.core.backend.BackendRealtimeEventType
 import com.nova.app.core.backend.BackendChatMessage
@@ -60,14 +48,17 @@ import com.nova.app.core.backend.BackendMediaUploadRequest
 import com.nova.app.core.backend.BackendMessageAttachment
 import com.nova.app.core.model.CreatePostDraft
 import com.nova.app.core.backend.payloadBoolean
+import com.nova.app.core.backend.payloadString
 import com.nova.app.core.backend.toChatMessage
 import com.nova.app.core.backend.toChatThread
-import com.nova.app.core.navigation.AppRoute
-import com.nova.app.core.navigation.ScreenStateKind
+import com.nova.app.core.backend.toDiscoveryCandidate
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 interface NovaRepository {
@@ -90,18 +81,30 @@ interface NovaRepository {
     suspend fun toggleTravelMode()
     suspend fun refreshProfile()
     suspend fun updateProfile(request: BackendProfileUpdateRequest)
+    suspend fun refreshDiscover()
+    suspend fun applyDiscoverFilters(gender: String, minAge: Int, maxAge: Int)
     suspend fun likeCandidate()
     suspend fun superLikeCandidate()
     suspend fun skipCandidate()
     suspend fun saveCandidate()
+    suspend fun pokeCandidate()
+    suspend fun clearDiscoverMessage()
     suspend fun refreshMessages()
+    suspend fun markVisibleChatThreadsSeen()
     suspend fun openChatThread(thread: ChatThread)
     suspend fun loadMoreChatMessages()
     suspend fun sendMessage(text: String, attachment: ChatAttachmentDraft? = null)
+    suspend fun retryMessage(messageId: String)
+    suspend fun setChatTyping(typing: Boolean)
+    suspend fun deleteCurrentThreadForMe()
+    suspend fun deleteMessageForMe(messageId: String)
+    suspend fun recallMessage(messageId: String)
+    suspend fun editMessage(messageId: String, text: String)
+    suspend fun uploadProfileImage(uri: Uri, fileName: String, mimeType: String, title: String): String?
     suspend fun toggleTopic(topicId: String)
     suspend fun joinEvent(eventId: String)
     suspend fun refreshCommunity(tab: String = "for_you", cursor: String? = null, refresh: Boolean = false, size: Int = 10)
-    suspend fun createCommunityPost(draft: CreatePostDraft)
+    suspend fun createCommunityPost(draft: CreatePostDraft): Boolean
     suspend fun likeCommunityPost(postId: String, liked: Boolean = true)
     suspend fun commentCommunityPost(postId: String, text: String)
     suspend fun shareCommunityPost(postId: String, target: String = "profile", recipientUserId: String? = null, copyLink: Boolean = true)
@@ -110,7 +113,7 @@ interface NovaRepository {
     fun applyRealtimeEvent(event: BackendRealtimeEvent, currentUserId: String?)
 }
 
-class FakeNovaRepository : NovaRepository {
+class DefaultNovaRepository : NovaRepository {
     private val sessionState = MutableStateFlow(SessionState())
     private val settingsState = MutableStateFlow(defaultSettings())
     private val discoverState = MutableStateFlow(defaultDiscoverState())
@@ -120,6 +123,7 @@ class FakeNovaRepository : NovaRepository {
     private val communityState = MutableStateFlow(defaultCommunityState())
     private val profileState = MutableStateFlow(defaultProfileState(settingsState.value))
     private var backendCurrentUserId: String? = null
+    private val seenDiscoverCandidateIds = linkedSetOf<String>()
 
     override val session: StateFlow<SessionState> = sessionState.asStateFlow()
     override val settings: StateFlow<AppSettings> = settingsState.asStateFlow()
@@ -174,6 +178,22 @@ class FakeNovaRepository : NovaRepository {
         val runtime = BackendRuntimeRegistry.runtime ?: return
         val profile = runCatching { runtime.fetchMe() }.getOrNull() ?: return
         applyBackendProfile(profile)
+        // Diamond balance and the active VIP tier live in the commerce wallet, not in /me.
+        runCatching { runtime.fetchCommerceMe() }.getOrNull()?.let { wallet ->
+            profileState.update { current ->
+                current.copy(
+                    diamonds = wallet.diamondBalance.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    user = if (wallet.vipActive) {
+                        current.user.copy(
+                            vipTierId = wallet.vipTierId ?: current.user.vipTierId,
+                            vipTierName = wallet.vipTierName ?: current.user.vipTierName,
+                        )
+                    } else {
+                        current.user
+                    },
+                )
+            }
+        }
         val posts = runCatching { runtime.fetchProfilePosts(profile.userId) }.getOrNull()
         if (posts != null) {
             profileState.update { current ->
@@ -192,29 +212,85 @@ class FakeNovaRepository : NovaRepository {
         }
     }
 
+    override suspend fun refreshDiscover() {
+        val state = discoverState.value
+        loadDiscoverFromBackend(
+            gender = state.selectedGender,
+            minAge = state.minAge,
+            maxAge = state.maxAge,
+            excludeSeen = false,
+        )
+    }
+
+    override suspend fun applyDiscoverFilters(gender: String, minAge: Int, maxAge: Int) {
+        seenDiscoverCandidateIds.clear()
+        discoverState.update {
+            it.copy(
+                selectedGender = gender,
+                minAge = minAge,
+                maxAge = maxAge,
+                queue = emptyList(),
+                activeIndex = 0,
+                loading = true,
+                error = null,
+                pokeMessage = null,
+            )
+        }
+        loadDiscoverFromBackend(gender, minAge, maxAge, excludeSeen = false)
+    }
+
     override suspend fun likeCandidate() {
+        val current = discoverState.value.activeCandidate() ?: return
+        runCatching { BackendRuntimeRegistry.runtime?.swipeDiscoverCandidate(current.candidateKey(), "right") }
         discoverState.update { state ->
-            val next = state.queue.drop(1).ifEmpty { sampleCandidates() }
+            seenDiscoverCandidateIds += current.candidateKey()
+            val next = nextLocalDiscoverQueue(state)
             state.copy(queue = next, liked = state.liked + 1, activeIndex = 0)
         }
+        refillDiscoverIfNeeded()
     }
 
     override suspend fun superLikeCandidate() {
+        val current = discoverState.value.activeCandidate() ?: return
+        runCatching { BackendRuntimeRegistry.runtime?.swipeDiscoverCandidate(current.candidateKey(), "super") }
         discoverState.update { state ->
-            val next = state.queue.drop(1).ifEmpty { sampleCandidates() }
+            seenDiscoverCandidateIds += current.candidateKey()
+            val next = nextLocalDiscoverQueue(state)
             state.copy(queue = next, superLiked = state.superLiked + 1, activeIndex = 0)
         }
+        refillDiscoverIfNeeded()
     }
 
     override suspend fun skipCandidate() {
+        val current = discoverState.value.activeCandidate() ?: return
+        runCatching { BackendRuntimeRegistry.runtime?.swipeDiscoverCandidate(current.candidateKey(), "left") }
         discoverState.update { state ->
-            val next = state.queue.drop(1).ifEmpty { sampleCandidates() }
+            seenDiscoverCandidateIds += current.candidateKey()
+            val next = nextLocalDiscoverQueue(state)
             state.copy(queue = next, skipped = state.skipped + 1, activeIndex = 0)
         }
+        refillDiscoverIfNeeded()
     }
 
     override suspend fun saveCandidate() {
         discoverState.update { it.copy(saved = it.saved + 1) }
+    }
+
+    override suspend fun pokeCandidate() {
+        val current = discoverState.value.activeCandidate() ?: return
+        val response = runCatching {
+            BackendRuntimeRegistry.runtime?.pokeDiscoverCandidate(current.candidateKey())
+        }.getOrNull()
+        discoverState.update { state ->
+            state.copy(
+                pokeMessage = response?.message ?: "Poke sent",
+                error = if (response == null && BackendRuntimeRegistry.runtime?.currentSession() != null) "Unable to send poke" else null,
+            )
+        }
+    }
+
+    override suspend fun clearDiscoverMessage() {
+        discoverState.update { it.copy(pokeMessage = null) }
     }
 
     override suspend fun refreshMessages() {
@@ -234,9 +310,30 @@ class FakeNovaRepository : NovaRepository {
         }
     }
 
+    override suspend fun markVisibleChatThreadsSeen() {
+        val unreadThreadIds = messagesState.value.threads
+            .filter { it.unreadCount > 0 }
+            .map { it.id }
+        if (unreadThreadIds.isEmpty()) {
+            return
+        }
+        messagesState.update { state ->
+            state.copy(
+                threads = state.threads.map { thread ->
+                    if (thread.unreadCount > 0) thread.copy(unreadCount = 0) else thread
+                }
+            )
+        }
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        unreadThreadIds.forEach { threadId ->
+            runCatching { runtime.markThreadRead(threadId) }
+        }
+    }
+
     override suspend fun openChatThread(thread: ChatThread) {
         val runtime = BackendRuntimeRegistry.runtime
         val session = runtime?.currentSession()
+        val requestedThreadId = thread.id
         chatState.update { current ->
             current.copy(
                 thread = thread,
@@ -270,7 +367,7 @@ class FakeNovaRepository : NovaRepository {
         val backendThread = detail.thread.toChatThread().copy(unreadCount = 0)
         val messages = detail.messages.asReversed().map { it.toChatMessage(session.userId) }
         chatState.update { current ->
-            if (current.thread.id != backendThread.id) {
+            if (current.thread.id != requestedThreadId && current.thread.id != backendThread.id) {
                 current
             } else {
                 current.copy(
@@ -291,7 +388,7 @@ class FakeNovaRepository : NovaRepository {
                 onlineNow = updatedThreads.count { it.online },
             )
         }
-        runCatching { runtime.markThreadRead(thread.id) }
+        runCatching { runtime.markThreadRead(backendThread.id) }
     }
 
     override suspend fun loadMoreChatMessages() {
@@ -334,9 +431,92 @@ class FakeNovaRepository : NovaRepository {
     }
 
     override suspend fun sendMessage(text: String, attachment: ChatAttachmentDraft?) {
-        val runtime = BackendRuntimeRegistry.runtime ?: return
-        val session = runtime.currentSession() ?: return
         val outgoing = chatState.value
+        if (outgoing.thread.id.isBlank()) {
+            return
+        }
+        val now = Instant.now()
+        val pendingId = "pending-${now.toEpochMilli()}"
+        val pendingMessage = ChatMessage(
+            id = pendingId,
+            text = text.trim(),
+            sentByMe = true,
+            timeLabel = timeLabel(now),
+            createdAt = now.toString(),
+            isVoice = attachment?.kind == ChatAttachmentKind.Audio,
+            attachmentKind = attachment?.kind,
+            attachmentUrl = attachment?.uri?.toString(),
+            attachmentPreviewUrl = attachment?.previewUri?.toString(),
+            attachmentMimeType = attachment?.mimeType,
+            attachmentName = attachment?.name,
+            attachmentDurationSeconds = attachment?.durationSeconds,
+            attachmentWidth = attachment?.width,
+            attachmentHeight = attachment?.height,
+            status = "SENDING",
+        )
+        enqueueOutgoingMessage(outgoing.thread, pendingMessage, previewTextForOutgoing(text, attachment))
+        deliverPendingMessage(outgoing.thread, pendingMessage, attachment)
+    }
+
+    override suspend fun retryMessage(messageId: String) {
+        val outgoing = chatState.value
+        val failedMessage = outgoing.messages.firstOrNull {
+            it.id == messageId && it.status.equals("FAILED", ignoreCase = true)
+        } ?: return
+        val now = Instant.now()
+        val retryingMessage = failedMessage.copy(
+            status = "SENDING",
+            timeLabel = timeLabel(now),
+            createdAt = now.toString(),
+            isRead = false,
+        )
+        val attachment = retryingMessage.toRetryAttachmentDraft()
+        enqueueOutgoingMessage(outgoing.thread, retryingMessage, previewTextForMessage(retryingMessage, attachment))
+        deliverPendingMessage(outgoing.thread, retryingMessage, attachment)
+    }
+
+    private fun enqueueOutgoingMessage(thread: ChatThread, message: ChatMessage, previewText: String) {
+        chatState.update { state ->
+            if (state.thread.id == thread.id) {
+                state.copy(
+                    thread = state.thread.copy(lastMessage = previewText, unreadCount = 0, typing = false),
+                    messages = state.messages.upsertNewest(message),
+                    typing = false,
+                )
+            } else {
+                state
+            }
+        }
+        messagesState.update { state ->
+            val existingThread = state.threads.firstOrNull { it.id == thread.id }
+            val mergedThread = (existingThread ?: thread).copy(
+                lastMessage = previewText,
+                unreadCount = 0,
+                typing = false,
+            )
+            val updatedThreads = listOf(mergedThread) + state.threads.filterNot { it.id == mergedThread.id }
+            state.copy(
+                threads = updatedThreads,
+                onlineNow = updatedThreads.count { it.online },
+            )
+        }
+    }
+
+    private suspend fun deliverPendingMessage(
+        thread: ChatThread,
+        pendingMessage: ChatMessage,
+        attachment: ChatAttachmentDraft?,
+    ) {
+        val runtime = BackendRuntimeRegistry.runtime ?: run {
+            markMessageFailed(thread.id, pendingMessage.id)
+            return
+        }
+        val session = runtime.currentSession() ?: run {
+            markMessageFailed(thread.id, pendingMessage.id)
+            return
+        }
+
+        runCatching { runtime.setTyping(thread.id, false) }
         val backendAttachment = attachment?.let { draft ->
             val uploaded = runCatching {
                 runtime.uploadMedia(
@@ -348,7 +528,10 @@ class FakeNovaRepository : NovaRepository {
                         kind = draft.kind,
                     )
                 )
-            }.getOrNull() ?: return
+            }.getOrNull() ?: run {
+                markMessageFailed(thread.id, pendingMessage.id)
+                return
+            }
             BackendMessageAttachment(
                 url = uploaded.url,
                 previewUrl = uploaded.previewUrl,
@@ -356,28 +539,38 @@ class FakeNovaRepository : NovaRepository {
                 name = draft.name,
                 kind = draft.kind,
                 durationSeconds = draft.durationSeconds,
+                width = draft.width,
+                height = draft.height,
             )
         }
         val sent = runCatching {
-            runtime.sendMessage(outgoing.thread.id, text.trim(), backendAttachment)
-        }.getOrNull() ?: return
-        val message = sent.toChatMessage(session.userId)
-        val updatedThread = outgoing.thread.copy(lastMessage = previewTextForOutgoing(text, attachment), unreadCount = 0, typing = false)
+            runtime.sendMessage(thread.id, pendingMessage.text.trim(), backendAttachment)
+        }.getOrNull() ?: run {
+            markMessageFailed(thread.id, pendingMessage.id)
+            return
+        }
+        val sentMessage = sent.toChatMessage(session.userId)
+        val message = sentMessage.copy(
+            attachmentWidth = sentMessage.attachmentWidth ?: pendingMessage.attachmentWidth,
+            attachmentHeight = sentMessage.attachmentHeight ?: pendingMessage.attachmentHeight,
+        )
+        val previewText = previewTextForMessage(pendingMessage, attachment)
+        val updatedThread = thread.copy(lastMessage = previewText, unreadCount = 0, typing = false)
         chatState.update { state ->
-            if (state.thread.id != outgoing.thread.id) {
+            if (state.thread.id != thread.id) {
                 state
             } else {
                 state.copy(
                     thread = updatedThread,
-                    messages = state.messages.upsertNewest(message),
+                    messages = state.messages.filterNot { it.id == pendingMessage.id }.upsertNewest(message),
                     typing = false,
                 )
             }
         }
         messagesState.update { state ->
-            val existingThread = state.threads.firstOrNull { it.id == outgoing.thread.id }
+            val existingThread = state.threads.firstOrNull { it.id == thread.id }
             val mergedThread = (existingThread ?: updatedThread).copy(
-                lastMessage = previewTextForOutgoing(text, attachment),
+                lastMessage = previewText,
                 unreadCount = 0,
                 typing = false,
             )
@@ -386,6 +579,98 @@ class FakeNovaRepository : NovaRepository {
                 threads = updatedThreads,
                 onlineNow = updatedThreads.count { it.online },
             )
+        }
+    }
+
+    override suspend fun setChatTyping(typing: Boolean) {
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        val threadId = chatState.value.thread.id
+        if (threadId.isBlank()) {
+            return
+        }
+        runCatching { runtime.setTyping(threadId, typing) }
+    }
+
+    override suspend fun uploadProfileImage(
+        uri: Uri,
+        fileName: String,
+        mimeType: String,
+        title: String,
+    ): String? {
+        val runtime = BackendRuntimeRegistry.runtime ?: return null
+        return runCatching {
+            runtime.uploadMedia(
+                BackendMediaUploadRequest(
+                    uri = uri,
+                    fileName = fileName,
+                    title = title,
+                    mimeType = mimeType,
+                    kind = ChatAttachmentKind.Image,
+                )
+            )?.url
+        }.getOrNull()
+    }
+
+    override suspend fun deleteCurrentThreadForMe() {
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        val threadId = chatState.value.thread.id
+        val deleted = runCatching { runtime.deleteThreadForMe(threadId) }.getOrDefault(false)
+        if (deleted) {
+            messagesState.update { state ->
+                state.copy(threads = state.threads.filterNot { it.id == threadId })
+            }
+            chatState.update { state ->
+                if (state.thread.id == threadId) {
+                    state.copy(messages = emptyList(), typing = false, hasMore = false, nextCursor = null)
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteMessageForMe(messageId: String) {
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        val threadId = chatState.value.thread.id
+        val deleted = runCatching { runtime.deleteMessageForMe(threadId, messageId) }.getOrDefault(false)
+        if (deleted) {
+            chatState.update { state ->
+                if (state.thread.id == threadId) {
+                    state.copy(messages = state.messages.filterNot { it.id == messageId })
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    override suspend fun recallMessage(messageId: String) {
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        val session = runtime.currentSession() ?: return
+        val threadId = chatState.value.thread.id
+        val recalled = runCatching { runtime.recallMessage(threadId, messageId) }.getOrNull() ?: return
+        val message = recalled.toChatMessage(session.userId)
+        chatState.update { state ->
+            if (state.thread.id == threadId) {
+                state.copy(messages = state.messages.upsertNewest(message))
+            } else {
+                state
+            }
+        }
+    }
+
+    override suspend fun editMessage(messageId: String, text: String) {
+        val runtime = BackendRuntimeRegistry.runtime ?: return
+        val session = runtime.currentSession() ?: return
+        val threadId = chatState.value.thread.id
+        val edited = runCatching { runtime.editMessage(threadId, messageId, text.trim()) }.getOrNull() ?: return
+        val message = edited.toChatMessage(session.userId)
+        chatState.update { state ->
+            if (state.thread.id == threadId) {
+                state.copy(messages = state.messages.upsertNewest(message))
+            } else {
+                state
+            }
         }
     }
 
@@ -423,7 +708,7 @@ class FakeNovaRepository : NovaRepository {
         }
     }
 
-    override suspend fun createCommunityPost(draft: CreatePostDraft) {
+    override suspend fun createCommunityPost(draft: CreatePostDraft): Boolean {
         val runtime = BackendRuntimeRegistry.runtime
         if (runtime != null) {
             val created = runCatching {
@@ -442,34 +727,12 @@ class FakeNovaRepository : NovaRepository {
             }.getOrNull()
             if (created != null) {
                 refreshCommunity(communityState.value.selectedTab, refresh = true)
-                return
+                return true
             }
+            return false
         }
 
-        communityState.update { current ->
-            val nextPosts = listOf(
-                CommunityPost(
-                    id = "draft-${current.posts.size + 1}",
-                    topic = current.topics.firstOrNull()?.title ?: "For You",
-                    author = current.posts.firstOrNull()?.author ?: sampleUsers()[0],
-                    postType = draft.postType,
-                    text = draft.text,
-                    mediaUrl = draft.mediaUrl,
-                    mediaUrls = draft.mediaUrls,
-                    thumbnailUrl = draft.thumbnailUrl,
-                    tags = draft.tags,
-                    mentionedUserIds = draft.mentionedUserIds,
-                    likes = 0,
-                    comments = 0,
-                    commentsPreview = emptyList(),
-                    shares = 0,
-                    likedByMe = true,
-                    sharedByMe = false,
-                    timeLabel = "Now",
-                )
-            ) + current.posts
-            current.copy(posts = nextPosts)
-        }
+        return false
     }
 
     override suspend fun likeCommunityPost(postId: String, liked: Boolean) {
@@ -547,6 +810,93 @@ class FakeNovaRepository : NovaRepository {
         profileState.value = defaultProfileState(settingsState.value)
     }
 
+    private suspend fun refillDiscoverIfNeeded() {
+        val state = discoverState.value
+        if (state.queue.size > 1) {
+            return
+        }
+        loadDiscoverFromBackend(state.selectedGender, state.minAge, state.maxAge, excludeSeen = true)
+    }
+
+    private suspend fun loadDiscoverFromBackend(
+        gender: String,
+        minAge: Int,
+        maxAge: Int,
+        excludeSeen: Boolean,
+    ): Boolean {
+        val runtime = BackendRuntimeRegistry.runtime ?: run {
+            discoverState.update { it.copy(loading = false, error = "Backend is not connected") }
+            return false
+        }
+        discoverState.update { it.copy(loading = true, error = null) }
+        val backendGender = gender.takeUnless { it.equals("Both", ignoreCase = true) || it.equals("All", ignoreCase = true) }
+        var response = runCatching {
+            runtime.fetchDiscover(
+                gender = backendGender,
+                minAge = minAge,
+                maxAge = maxAge,
+                excludeIds = if (excludeSeen) seenDiscoverCandidateIds.toList() else emptyList(),
+            )
+        }.getOrNull() ?: run {
+            discoverState.update { it.copy(loading = false, error = "Unable to load discover") }
+            return false
+        }
+        if (excludeSeen && response.items.isEmpty() && seenDiscoverCandidateIds.isNotEmpty()) {
+            seenDiscoverCandidateIds.clear()
+            response = runCatching {
+                runtime.fetchDiscover(
+                    gender = backendGender,
+                    minAge = minAge,
+                    maxAge = maxAge,
+                    excludeIds = emptyList(),
+                )
+            }.getOrNull() ?: response
+        }
+        val mapped = response.items.map { it.toDiscoveryCandidate() }.shuffled()
+        discoverState.update { state ->
+            val existingIds = state.queue.mapTo(hashSetOf()) { it.candidateKey() }
+            val merged = if (excludeSeen) {
+                state.queue + mapped.filterNot { candidate ->
+                    existingIds.contains(candidate.candidateKey()) || seenDiscoverCandidateIds.contains(candidate.candidateKey())
+                }
+            } else {
+                mapped
+            }
+            state.copy(
+                queue = merged,
+                activeIndex = 0,
+                loading = false,
+                error = null,
+            )
+        }
+        return true
+    }
+
+    private fun nextLocalDiscoverQueue(state: DiscoverUiState): List<DiscoveryCandidate> {
+        return state.queue.drop(1)
+    }
+
+    private fun DiscoverUiState.activeCandidate(): DiscoveryCandidate? {
+        return queue.getOrNull(activeIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0)))
+    }
+
+    private fun DiscoveryCandidate.candidateKey(): String {
+        return candidateId.ifBlank { user.id }
+    }
+
+    private fun List<DiscoveryCandidate>.filterByDiscoverFilters(gender: String, minAge: Int, maxAge: Int): List<DiscoveryCandidate> {
+        val normalizedGender = gender.trim().lowercase(Locale.ROOT)
+        val lowerAge = minAge.coerceAtLeast(0)
+        val upperAge = maxAge.coerceAtLeast(lowerAge)
+        return filter { candidate ->
+            val genderMatches = normalizedGender.isBlank() ||
+                    normalizedGender == "both" ||
+                    normalizedGender == "all" ||
+                    candidate.user.gender.lowercase(Locale.ROOT).contains(normalizedGender)
+            genderMatches && candidate.user.age in lowerAge..upperAge
+        }
+    }
+
     override fun applyBackendSession(session: BackendSession?) {
         if (session == null) {
             return
@@ -563,6 +913,7 @@ class FakeNovaRepository : NovaRepository {
             current.copy(
                 user = current.user.copy(
                     id = session.userId,
+                    publicId = session.publicId.ifBlank { current.user.publicId },
                     name = session.displayName,
                     photoUrl = session.avatarUrl?.takeIf { it.isNotBlank() } ?: current.user.photoUrl,
                 ),
@@ -575,10 +926,12 @@ class FakeNovaRepository : NovaRepository {
         val viewerUserId = currentUserId ?: backendCurrentUserId
         when (event.type) {
             BackendRealtimeEventType.MESSAGE_CREATED,
+            BackendRealtimeEventType.MESSAGE_UPDATED,
             BackendRealtimeEventType.MESSAGE_RECALLED -> applyRemoteMessage(event, viewerUserId)
 
             BackendRealtimeEventType.THREAD_READ -> applyThreadRead(event, viewerUserId)
             BackendRealtimeEventType.THREAD_TYPING -> applyThreadTyping(event)
+            BackendRealtimeEventType.USER_PRESENCE -> applyUserPresence(event)
             BackendRealtimeEventType.THREAD_DELETED -> applyThreadDeletion(event, viewerUserId)
             BackendRealtimeEventType.MESSAGE_DELETED -> applyMessageDeletion(event, viewerUserId)
             BackendRealtimeEventType.NOTIFICATION_CREATED -> applyNotification(event)
@@ -592,21 +945,7 @@ class FakeNovaRepository : NovaRepository {
         profileState.update { current ->
             current.copy(
                 settings = settings,
-                stats = listOf(
-                    StatCard("Matches", "128", "This month"),
-                    StatCard("Soulmates", "4", "High compatibility"),
-                    StatCard("Events", "17", "Joined"),
-                    StatCard("Streak", "26", "Days active"),
-                ),
-                badges = defaultBadges(),
-                wallet = defaultWallet(),
                 safety = defaultSafety(settings),
-                plans = defaultPlans(settings.premiumEnabled),
-                notifications = defaultNotifications(),
-                compatibility = defaultCompatibility(),
-                filters = defaultFilters(),
-                genericScreens = genericScreens(),
-                adminMetrics = defaultAdminMetrics(),
                 bio = current.bio,
             )
         }
@@ -718,6 +1057,7 @@ class FakeNovaRepository : NovaRepository {
             postId = postId,
             author = toUserCard(
                 id = authorId,
+                publicId = authorPublicId,
                 name = authorName,
                 photoUrl = authorAvatarUrl,
                 vipTierId = authorVipTierId,
@@ -729,8 +1069,17 @@ class FakeNovaRepository : NovaRepository {
             ),
             text = text,
             timeLabel = timeLabel,
+            createdAt = createdAt,
             mine = mine,
             mentionedUserIds = mentionedUserIds,
+            mentions = mentions.map { mention ->
+                CommunityMention(
+                    userId = mention.userId,
+                    displayName = mention.displayName,
+                    username = mention.username,
+                    avatarUrl = mention.avatarUrl,
+                )
+            },
         )
     }
 
@@ -740,6 +1089,7 @@ class FakeNovaRepository : NovaRepository {
             topic = topicId,
             author = toUserCard(
                 id = authorId,
+                publicId = authorPublicId,
                 name = authorName,
                 photoUrl = authorAvatarUrl,
                 vipTierId = authorVipTierId,
@@ -756,6 +1106,14 @@ class FakeNovaRepository : NovaRepository {
             thumbnailUrl = thumbnailUrl,
             tags = tags,
             mentionedUserIds = mentionedUserIds,
+            mentions = mentions.map { mention ->
+                CommunityMention(
+                    userId = mention.userId,
+                    displayName = mention.displayName,
+                    username = mention.username,
+                    avatarUrl = mention.avatarUrl,
+                )
+            },
             likes = likes,
             comments = comments,
             commentsPreview = commentsPreview.map { it.toCommunityComment() },
@@ -763,6 +1121,7 @@ class FakeNovaRepository : NovaRepository {
             likedByMe = likedByMe,
             sharedByMe = sharedByMe,
             timeLabel = timeLabel,
+            createdAt = createdAt,
         )
     }
 
@@ -870,7 +1229,7 @@ class FakeNovaRepository : NovaRepository {
             } else {
                 state.copy(
                     messages = state.messages.map { message ->
-                        if (message.sentByMe) message else message.copy(isRead = true)
+                        if (message.sentByMe) message.copy(isRead = true, status = "SEEN") else message
                     },
                 )
             }
@@ -889,6 +1248,34 @@ class FakeNovaRepository : NovaRepository {
         }
         chatState.update { state ->
             if (state.thread.id == threadId) state.copy(typing = typing) else state
+        }
+    }
+
+    private fun applyUserPresence(event: BackendRealtimeEvent) {
+        val userId = event.payloadString("userId", event.actorUserId.orEmpty())
+        if (userId.isBlank()) {
+            return
+        }
+        val online = event.payloadBoolean("online")
+        messagesState.update { state ->
+            val threads = state.threads.map { thread ->
+                if (thread.user.id == userId) {
+                    thread.copy(online = online, user = thread.user.copy(online = online))
+                } else {
+                    thread
+                }
+            }
+            state.copy(
+                threads = threads,
+                onlineNow = threads.count { it.online },
+            )
+        }
+        chatState.update { state ->
+            if (state.thread.user.id == userId) {
+                state.copy(thread = state.thread.copy(online = online, user = state.thread.user.copy(online = online)))
+            } else {
+                state
+            }
         }
     }
 
@@ -931,12 +1318,16 @@ class FakeNovaRepository : NovaRepository {
     private fun applyNotification(event: BackendRealtimeEvent) {
         val title = event.title ?: return
         val body = event.body ?: return
+        val kind = event.payload["kind"] ?: "System"
+        if (kind.equals("MESSAGE", ignoreCase = true) || kind.equals("CALL", ignoreCase = true)) {
+            return
+        }
         val notification = NotificationItem(
             id = event.payload["notificationId"] ?: event.id,
             title = title,
             description = body,
             timeLabel = event.payload["timeLabel"] ?: "Now",
-            type = event.payload["kind"] ?: "System",
+            type = kind,
             unread = !event.payloadBoolean("read"),
             actionTarget = event.payload["actionTarget"],
             threadId = event.threadId ?: event.payload["threadId"],
@@ -980,6 +1371,35 @@ class FakeNovaRepository : NovaRepository {
         return text.trim()
     }
 
+    private fun previewTextForMessage(message: ChatMessage, attachment: ChatAttachmentDraft?): String {
+        return previewTextForOutgoing(message.text, attachment)
+    }
+
+    private fun ChatMessage.toRetryAttachmentDraft(): ChatAttachmentDraft? {
+        val kind = attachmentKind ?: if (isVoice) ChatAttachmentKind.Audio else return null
+        val source = attachmentUrl ?: attachmentPreviewUrl ?: return null
+        return ChatAttachmentDraft(
+            uri = Uri.parse(source),
+            kind = kind,
+            name = attachmentName ?: when (kind) {
+                ChatAttachmentKind.Image -> "image.jpg"
+                ChatAttachmentKind.Video -> "video.mp4"
+                ChatAttachmentKind.Audio -> "voice.m4a"
+                ChatAttachmentKind.File -> "file"
+            },
+            mimeType = attachmentMimeType ?: when (kind) {
+                ChatAttachmentKind.Image -> "image/jpeg"
+                ChatAttachmentKind.Video -> "video/mp4"
+                ChatAttachmentKind.Audio -> "audio/mp4"
+                ChatAttachmentKind.File -> "application/octet-stream"
+            },
+            durationSeconds = attachmentDurationSeconds,
+            previewUri = attachmentPreviewUrl?.let(Uri::parse),
+            width = attachmentWidth,
+            height = attachmentHeight,
+        )
+    }
+
     private fun List<ChatMessage>.upsertNewest(message: ChatMessage): List<ChatMessage> {
         val existingIndex = indexOfFirst { it.id == message.id }
         return if (existingIndex >= 0) {
@@ -989,6 +1409,26 @@ class FakeNovaRepository : NovaRepository {
         } else {
             listOf(message) + filterNot { it.id == message.id }
         }
+    }
+
+    private fun markMessageFailed(threadId: String, messageId: String) {
+        chatState.update { state ->
+            if (state.thread.id != threadId) {
+                state
+            } else {
+                state.copy(
+                    messages = state.messages.map { message ->
+                        if (message.id == messageId) message.copy(status = "FAILED") else message
+                    },
+                    typing = false,
+                )
+            }
+        }
+    }
+
+    private fun timeLabel(instant: Instant): String {
+        return DateTimeFormatter.ofPattern("HH:mm")
+            .format(instant.atZone(ZoneId.systemDefault()))
     }
 
     private fun callSummaryPreview(summary: com.nova.app.core.model.CallSummaryUiState): String {
@@ -1017,70 +1457,30 @@ class FakeNovaRepository : NovaRepository {
     private fun defaultSettings() = AppSettings()
 
     private fun defaultHomeState() = HomeUiState(
-        stories = listOf(
-            StoryItem(user = sampleUsers()[0], mediaUrl = SampleMedia.landscape1, caption = "Rooftop sunset and a latte.", music = "SZA - Snooze"),
-            StoryItem(user = sampleUsers()[1], mediaUrl = SampleMedia.landscape2, caption = "Hiking before breakfast.", music = "Odesza - A Moment Apart"),
-            StoryItem(user = sampleUsers()[2], mediaUrl = SampleMedia.landscape3, caption = "Vinyl night with friends.", music = "Khruangbin - Time"),
-            StoryItem(user = sampleUsers()[3], mediaUrl = SampleMedia.landscape4, caption = "Museum, then cocktail bar.", music = "Glass Animals - Gooey"),
-        ),
-        feed = listOf(
-            FeedPost(
-                id = "feed-1",
-                author = sampleUsers()[0],
-                caption = "A soft launch into my new city. Coffee, design, and long walks only.",
-                mediaUrls = listOf(SampleMedia.portrait2),
-                likes = 384,
-                comments = 48,
-                saves = 94,
-                tags = listOf("City life", "Coffee", "Fashion"),
-                timeLabel = "12m ago",
-            ),
-            FeedPost(
-                id = "feed-2",
-                author = sampleUsers()[1],
-                caption = "Looking for a hiking buddy who can also recommend a good playlist.",
-                mediaUrls = listOf(SampleMedia.landscape3),
-                likes = 221,
-                comments = 31,
-                saves = 62,
-                tags = listOf("Hiking", "Music", "Weekend"),
-                timeLabel = "1h ago",
-            ),
-        ),
-        featured = sampleCandidates().first(),
-        events = sampleEvents(),
-        communities = sampleTopics(),
-        suggestions = listOf("Video date tonight", "Coffee nearby", "Soulmate picks", "Join a community"),
+        stories = emptyList(),
+        feed = emptyList(),
+        featured = emptyDiscoveryCandidate(),
+        events = emptyList(),
+        communities = emptyList(),
+        suggestions = emptyList(),
     )
 
     private fun defaultDiscoverState() = DiscoverUiState(
-        queue = sampleCandidates(),
+        queue = emptyList(),
         activeIndex = 0,
-        liked = 18,
-        superLiked = 4,
-        saved = 9,
-        skipped = 27,
     )
 
     private fun defaultMessagesState() = MessagesUiState(
         threads = emptyList(),
         onlineNow = 0,
         filters = listOf("All", "Matches", "Voice", "Groups"),
-        searchHint = "Search by name, interest, or city",
+        searchHint = "Search people",
     )
 
     private fun defaultChatState() = ChatUiState(
         thread = ChatThread(
             id = "",
-            user = UserCard(
-                id = "",
-                name = "Chat",
-                age = 0,
-                photoUrl = "",
-                verified = false,
-                online = false,
-                city = "",
-            ),
+            user = emptyUserCard(),
             lastMessage = "",
             unreadCount = 0,
             online = false,
@@ -1097,127 +1497,31 @@ class FakeNovaRepository : NovaRepository {
     )
 
     private fun defaultCommunityState() = CommunityUiState(
-        topics = sampleTopics(),
-        posts = listOf(
-            CommunityPost(
-                id = "cp-1",
-                topic = "Travel",
-                author = sampleUsers()[0],
-                postType = "TEXT",
-                text = "Best date spots in Bangkok that don't feel touristy?",
-                mediaUrl = null,
-                mediaUrls = emptyList(),
-                likes = 84,
-                comments = 14,
-                timeLabel = "2h ago",
-            ),
-            CommunityPost(
-                id = "cp-2",
-                topic = "Fitness",
-                author = sampleUsers()[1],
-                postType = "IMAGE",
-                text = "Sunset walk, one frame, no filter.",
-                mediaUrl = SampleMedia.landscape1,
-                mediaUrls = listOf(SampleMedia.landscape1),
-                likes = 58,
-                comments = 9,
-                timeLabel = "5h ago",
-            ),
-            CommunityPost(
-                id = "cp-3",
-                topic = "Photography",
-                author = sampleUsers()[2],
-                postType = "IMAGE",
-                text = "Three frames from the same golden hour walk.",
-                mediaUrl = SampleMedia.landscape2,
-                mediaUrls = listOf(SampleMedia.landscape2, SampleMedia.landscape3, SampleMedia.landscape4),
-                likes = 102,
-                comments = 21,
-                timeLabel = "8h ago",
-            ),
-            CommunityPost(
-                id = "cp-4",
-                topic = "Travel",
-                author = sampleUsers()[3],
-                postType = "MIXED",
-                text = "Weekend recap: stills, then the reel.",
-                mediaUrl = SampleMedia.landscape3,
-                mediaUrls = listOf(
-                    SampleMedia.landscape3,
-                    "https://www.w3schools.com/html/mov_bbb.mp4",
-                    SampleMedia.landscape1,
-                ),
-                thumbnailUrl = SampleMedia.landscape4,
-                likes = 77,
-                comments = 18,
-                timeLabel = "11h ago",
-            ),
-            CommunityPost(
-                id = "cp-5",
-                topic = "Cafe",
-                author = sampleUsers()[4],
-                postType = "VIDEO",
-                text = "Short clip from last night's set.",
-                mediaUrl = "https://www.w3schools.com/html/mov_bbb.mp4",
-                mediaUrls = listOf("https://www.w3schools.com/html/mov_bbb.mp4"),
-                thumbnailUrl = SampleMedia.landscape2,
-                likes = 41,
-                comments = 6,
-                timeLabel = "1d ago",
-            ),
-        ),
-        events = sampleEvents(),
-        trending = listOf("Travel friends", "Coffee dates", "Startup founders", "Anime night"),
+        topics = emptyList(),
+        posts = emptyList(),
+        events = emptyList(),
+        trending = emptyList(),
     )
 
     private fun defaultProfileState(settings: AppSettings) = ProfileUiState(
-        user = sampleUsers()[4].copy(
-            vipTierId = "vip_0",
-            vipTierName = "VIP 0",
-            premium = false,
-        ),
-        bio = "Builder by day, city explorer by night. Looking for something emotionally honest and curious.",
-        featuredPhotos = listOf(
-            SampleMedia.portrait6,
-            SampleMedia.landscape1,
-            SampleMedia.landscape2,
-        ),
-        interests = listOf("Travel", "Coffee", "Music", "Photography"),
-        diamonds = 100,
-        prompts = listOf(
-            "A green flag I notice immediately is...",
-            "My ideal first date is...",
-            "The song that feels like home is...",
-        ),
-        badges = defaultBadges(),
-        stats = listOf(
-            StatCard("Matches", "128", "Lifetime"),
-            StatCard("Soulmates", "4", "High compatibility"),
-            StatCard("Events", "17", "Joined"),
-            StatCard("Streak", "26", "Days"),
-        ),
+        user = emptyUserCard(),
+        bio = "",
+        featuredPhotos = emptyList(),
+        interests = emptyList(),
+        posts = emptyList(),
+        diamonds = 0,
+        prompts = emptyList(),
+        badges = emptyList(),
+        stats = emptyList(),
         settings = settings,
-        wallet = defaultWallet(),
+        wallet = emptyList(),
         safety = defaultSafety(settings),
-        plans = defaultPlans(settings.premiumEnabled),
-        notifications = defaultNotifications(),
-        genericScreens = genericScreens(),
-        adminMetrics = defaultAdminMetrics(),
-        compatibility = defaultCompatibility(),
-        filters = defaultFilters(),
-    )
-
-    private fun defaultBadges() = listOf(
-        BadgeItem("b1", "Daily Login", "Opened the app 26 days in a row", 100, "26", true),
-        BadgeItem("b2", "Verified", "Photo and identity verified", 100, "V", true),
-        BadgeItem("b3", "Community Leader", "Helpful and active in communities", 72, "C", false),
-        BadgeItem("b4", "Video Date", "Completed a successful video date", 48, "VD", false),
-    )
-
-    private fun defaultWallet() = listOf(
-        WalletEntry("w1", "Coins added", "Gift credit from a match", "+120", "Today", true),
-        WalletEntry("w2", "Premium", "Monthly subscription", "-$19.99", "Yesterday", false),
-        WalletEntry("w3", "Boost", "Profile boost used", "-25", "2d ago", false),
+        plans = emptyList(),
+        notifications = emptyList(),
+        genericScreens = emptyList(),
+        adminMetrics = emptyList(),
+        compatibility = emptyList(),
+        filters = emptyList(),
     )
 
     private fun defaultSafety(settings: AppSettings) = listOf(
@@ -1229,324 +1533,37 @@ class FakeNovaRepository : NovaRepository {
         SafetyItem("Video Verification", "Record a short verification clip", "Off", settings.videoVerificationEnabled),
     )
 
-    private fun defaultPlans(premiumEnabled: Boolean) = listOf(
-        PremiumPlan(
-            name = "Free",
-            price = "$0",
-            cycle = "Forever",
-            subtitle = "Core matching, stories, and community access.",
-            features = listOf("Daily likes", "Basic filters", "Messaging", "Community access"),
-            highlighted = !premiumEnabled,
-        ),
-        PremiumPlan(
-            name = "Premium",
-            price = "$19.99",
-            cycle = "per month",
-            subtitle = "Unlimited matches, advanced filters, and AI coach.",
-            features = listOf("Unlimited likes", "Incognito", "Boost", "See who liked you", "Undo swipe", "Travel mode"),
-            highlighted = premiumEnabled,
-        ),
+    private fun emptyUserCard(name: String = "") = UserCard(
+        id = "",
+        name = name,
+        age = 0,
+        photoUrl = "",
+        verified = false,
+        distanceKm = null,
+        online = false,
+        city = "",
+        vipTierId = null,
+        vipTierName = null,
+        premium = false,
+        gender = "Not specified",
+        publicId = "",
     )
 
-    private fun defaultNotifications() = listOf(
-        NotificationItem("n1", "New match", "Mia liked your profile and sent a message.", "5m", "Match", true),
-        NotificationItem("n2", "Event reminder", "Coffee date meetup starts in 2 hours.", "1h", "Event", true),
-        NotificationItem("n3", "Community reply", "Your post got 12 replies in Travel.", "3h", "Community", false),
-        NotificationItem("n4", "Premium offer", "Unlock advanced filters and travel mode.", "Yesterday", "Promotion", false),
-    )
-
-    private fun defaultCompatibility() = listOf(
-        CompatibilityMetric("Personality", 94, "Shared energy"),
-        CompatibilityMetric("Lifestyle", 88, "Aligned pace"),
-        CompatibilityMetric("Emotion", 91, "Deep trust"),
-        CompatibilityMetric("Communication", 97, "Clear and direct"),
-        CompatibilityMetric("Love Language", 89, "Strong overlap"),
-        CompatibilityMetric("Conflict", 84, "Healthy repair"),
-    )
-
-    private fun defaultFilters() = listOf(
-        SearchFilter("Distance", "Nearby"),
-        SearchFilter("Age", "24-34"),
-        SearchFilter("MBTI", "INFJ / ENFP"),
-        SearchFilter("Language", "English, Vietnamese"),
-        SearchFilter("Goal", "Long-term"),
-    )
-
-    private fun defaultAdminMetrics() = listOf(
-        AdminMetric("Revenue", "$48.2K", "+12.4%", true),
-        AdminMetric("Subscriptions", "7.8K", "+8.6%", true),
-        AdminMetric("Reports", "42", "-18%", true),
-        AdminMetric("Active users", "129K", "+9.1%", true),
-    )
-
-    private fun genericScreens() = listOf(
-        ScreenSpec(
-            id = "saved",
-            title = "Saved",
-            subtitle = "Curate the people and posts you want to revisit.",
-            heroLabel = "Saved for later",
-            heroDescription = "Bookmarks, favorite profiles, and conversations you want to bring back into the flow.",
-            stats = listOf(StatCard("Profiles", "24"), StatCard("Posts", "18"), StatCard("Events", "7")),
-            chips = listOf("Profiles", "Posts", "Events", "Music"),
-            bullets = listOf("Organize by mood", "Keep the best icebreakers", "Jump back in anytime"),
-            photos = listOf(SampleMedia.portrait1, SampleMedia.portrait2, SampleMedia.landscape2, SampleMedia.landscape3),
-            actions = listOf(ScreenAction("Open Premium", NovaIcons.Premium, AppRoute.Premium), ScreenAction("Back to Profile", NovaIcons.Profile, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "likes",
-            title = "Likes",
-            subtitle = "See who reacted, liked, or saved your vibe.",
-            heroLabel = "Who liked you",
-            heroDescription = "A mix of matches, communities, and story reactions that can turn into conversations.",
-            stats = listOf(StatCard("Likes", "128"), StatCard("Super likes", "9"), StatCard("Views", "4.1K")),
-            chips = listOf("Today", "This week", "This month"),
-            bullets = listOf("Fast response cards", "One-tap match actions", "Voice intro preview"),
-            photos = listOf(SampleMedia.portrait3, SampleMedia.portrait4, SampleMedia.portrait5, SampleMedia.portrait6),
-            actions = listOf(ScreenAction("Upgrade", NovaIcons.Premium, AppRoute.Premium), ScreenAction("See matches", NovaIcons.Messages, AppRoute.Messages, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "blocked",
-            title = "Blocked users",
-            subtitle = "Trust and safety list with instant control.",
-            heroLabel = "Safe by default",
-            heroDescription = "Manage blocked users, report history, and quick unblock flows from a single privacy surface.",
-            stats = listOf(StatCard("Blocked", "6"), StatCard("Reports", "3"), StatCard("Safe mode", "On")),
-            chips = listOf("Block", "Report", "Mute"),
-            bullets = listOf("Emergency access", "Scam alerts", "Identity verification"),
-            photos = listOf(SampleMedia.portrait7, SampleMedia.portrait8),
-            actions = listOf(ScreenAction("Open Safety", NovaIcons.Safety, AppRoute.Safety), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "privacy",
-            title = "Privacy center",
-            subtitle = "Control visibility, read receipts, and location sharing.",
-            heroLabel = "Privacy first",
-            heroDescription = "Every control is tuned for trust, not friction. Hide where needed, show only when it matters.",
-            stats = listOf(StatCard("Incognito", if (settingsState.value.incognitoEnabled) "On" else "Off"), StatCard("Location", if (settingsState.value.locationSharingEnabled) "Shared" else "Hidden")),
-            chips = listOf("Incognito", "Location", "Read receipts", "Hide profile"),
-            bullets = listOf("Fine-grained visibility", "Travel mode ready", "Safety controls in one place"),
-            photos = listOf(SampleMedia.landscape1, SampleMedia.landscape4),
-            actions = listOf(ScreenAction("Open Settings", NovaIcons.Settings, AppRoute.Settings), ScreenAction("Open Safety", NovaIcons.Safety, AppRoute.Safety, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "help",
-            title = "Help center",
-            subtitle = "Support, troubleshooting, and product guidance.",
-            heroLabel = "Need a hand?",
-            heroDescription = "Search articles, chat with support, and learn how to keep your profile strong.",
-            stats = listOf(StatCard("Articles", "120"), StatCard("Chat", "24/7"), StatCard("Response", "< 2h")),
-            chips = listOf("Account", "Payments", "Matches", "Safety"),
-            bullets = listOf("AI search answers", "Self-service flows", "Escalate when needed"),
-            photos = listOf(SampleMedia.portrait9, SampleMedia.portrait10),
-            actions = listOf(ScreenAction("Feedback", NovaIcons.Feedback, AppRoute.Settings), ScreenAction("About", NovaIcons.Info, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "feedback",
-            title = "Feedback",
-            subtitle = "Capture product feedback and UX pain points.",
-            heroLabel = "Say what you need",
-            heroDescription = "A premium feedback surface with screenshots, context, and an easy submit flow.",
-            stats = listOf(StatCard("Open", "14"), StatCard("Resolved", "126")),
-            chips = listOf("UX", "Bug", "Feature", "Billing"),
-            bullets = listOf("Screenshot attachment", "Priority tagging", "Direct follow up"),
-            photos = listOf(SampleMedia.landscape2, SampleMedia.landscape3),
-            actions = listOf(ScreenAction("Submit", NovaIcons.Send, AppRoute.Status(ScreenStateKind.Success)), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "about",
-            title = "About NOVA",
-            subtitle = "The product story, roadmap, and release notes.",
-            heroLabel = "Built for real connection",
-            heroDescription = "NOVA blends dating, social discovery, and community in one premium mobile experience.",
-            stats = listOf(StatCard("Version", "1.0"), StatCard("Users", "129K")),
-            chips = listOf("Dating", "Community", "AI", "Safety"),
-            bullets = listOf("Modern stack", "Design-first product", "Scalable architecture"),
-            photos = listOf(SampleMedia.landscape1, SampleMedia.landscape2, SampleMedia.landscape4),
-            actions = listOf(ScreenAction("Security", NovaIcons.Security, AppRoute.Safety), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "security",
-            title = "Security",
-            subtitle = "Passwords, devices, verification, and session health.",
-            heroLabel = "Trust layer",
-            heroDescription = "All critical security settings live in one place with clear progress and warnings.",
-            stats = listOf(StatCard("Verified", "Yes"), StatCard("Devices", "2")),
-            chips = listOf("2FA", "Device lock", "Identity", "Photo"),
-            bullets = listOf("Secure sign-in", "Session alerts", "Verification history"),
-            photos = listOf(SampleMedia.portrait5, SampleMedia.portrait6),
-            actions = listOf(ScreenAction("Identity", NovaIcons.Verified, AppRoute.Safety), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "verification",
-            title = "Verification",
-            subtitle = "Identity, video, and photo verification flows.",
-            heroLabel = "Verified humans only",
-            heroDescription = "A trust layer that keeps fake profiles out and gives real people confidence.",
-            stats = listOf(StatCard("Photo", "On"), StatCard("Video", "Ready"), StatCard("ID", "In review")),
-            chips = listOf("Photo", "Video", "ID", "Face match"),
-            bullets = listOf("Reduce spam", "Increase match trust", "Better conversion"),
-            photos = listOf(SampleMedia.portrait1, SampleMedia.portrait8, SampleMedia.portrait9),
-            actions = listOf(ScreenAction("Start", NovaIcons.Camera, AppRoute.Status(ScreenStateKind.Permission)), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "travel",
-            title = "Travel mode",
-            subtitle = "Reach people in the city you're visiting before you land.",
-            heroLabel = "Match anywhere",
-            heroDescription = "Discover locals, events, and coffee spots for your next trip.",
-            stats = listOf(StatCard("Cities", "18"), StatCard("Nearby", "214")),
-            chips = listOf("Cities", "Nearby", "Events", "Coffee"),
-            bullets = listOf("Smooth city switching", "Local recommendations", "Time-zone aware chat"),
-            photos = listOf(SampleMedia.landscape3, SampleMedia.landscape4),
-            actions = listOf(ScreenAction("Enable", NovaIcons.Travel, AppRoute.Events), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Premium, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "incognito",
-            title = "Incognito mode",
-            subtitle = "Browse and match privately when you want a low-profile session.",
-            heroLabel = "Private browsing",
-            heroDescription = "Only the people you like can discover you while this mode is active.",
-            stats = listOf(StatCard("Visible", "Selected"), StatCard("Private", "On")),
-            chips = listOf("Invisible", "Selected likes", "Private", "Safe"),
-            bullets = listOf("Hide from discover", "Selective visibility", "Premium gated"),
-            photos = listOf(SampleMedia.portrait2, SampleMedia.portrait7),
-            actions = listOf(ScreenAction("Upgrade", NovaIcons.Premium, AppRoute.Premium), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "boost",
-            title = "Boost",
-            subtitle = "Move your profile to the top and get instant reach.",
-            heroLabel = "Visibility spike",
-            heroDescription = "A premium growth surface with timing, analytics, and a fast activation button.",
-            stats = listOf(StatCard("Boosts", "3"), StatCard("Reach", "+240%")),
-            chips = listOf("Top slot", "Peak hours", "Analytics"),
-            bullets = listOf("Immediate ranking lift", "Best time suggestions", "Boost history"),
-            photos = listOf(SampleMedia.landscape2, SampleMedia.landscape3),
-            actions = listOf(ScreenAction("Activate", NovaIcons.Boost, AppRoute.Status(ScreenStateKind.Success)), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Premium, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "who_liked",
-            title = "Who liked you",
-            subtitle = "Premium reveal for the people most likely to match.",
-            heroLabel = "Reveal queue",
-            heroDescription = "A confidence-building way to see the people already interested in you.",
-            stats = listOf(StatCard("Hidden likes", "24"), StatCard("Mutual", "9")),
-            chips = listOf("Recent", "Top match", "Local"),
-            bullets = listOf("Fast matching", "Priority sorting", "Confidence boost"),
-            photos = listOf(SampleMedia.portrait3, SampleMedia.portrait4, SampleMedia.portrait5),
-            actions = listOf(ScreenAction("Open Premium", NovaIcons.Premium, AppRoute.Premium), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "daily_reward",
-            title = "Daily reward",
-            subtitle = "Claim coins, boosts, and bonus gifts.",
-            heroLabel = "Keep the streak",
-            heroDescription = "A light daily loop that feels rewarding without breaking the premium tone.",
-            stats = listOf(StatCard("Streak", "26"), StatCard("Coins", "420")),
-            chips = listOf("Coins", "Boost", "Gift", "Streak"),
-            bullets = listOf("Daily incentives", "Progressive rewards", "Soft habit loop"),
-            photos = listOf(SampleMedia.landscape1, SampleMedia.landscape2),
-            actions = listOf(ScreenAction("Claim", NovaIcons.Gift, AppRoute.Status(ScreenStateKind.Success)), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Profile, ActionKind.Secondary)),
-        ),
-        ScreenSpec(
-            id = "ux",
-            title = "UX audit",
-            subtitle = "Design system checks, accessibility, and performance states.",
-            heroLabel = "Ship quality",
-            heroDescription = "Review component reuse, empty/error handling, and touch target compliance.",
-            stats = listOf(StatCard("Components", "24"), StatCard("States", "7")),
-            chips = listOf("A11y", "Spacing", "States", "Motion"),
-            bullets = listOf("Touch target >= 44px", "Dark mode contrast", "Animation restraint"),
-            photos = listOf(SampleMedia.landscape4, SampleMedia.portrait10),
-            actions = listOf(ScreenAction("Open Design System", NovaIcons.Sparkle, AppRoute.DesignSystem), ScreenAction("Back", NovaIcons.ChevronRight, AppRoute.Admin, ActionKind.Secondary)),
-        ),
-    )
-
-    private fun sampleUsers() = listOf(
-        UserCard("u1", "Mia", 27, SampleMedia.portrait2, verified = true, distanceKm = 2, online = true, city = "Bangkok", vipTierId = "vip_1", vipTierName = "VIP 1 Spark", premium = true, gender = "Female"),
-        UserCard("u2", "Noah", 29, SampleMedia.portrait3, verified = true, distanceKm = 4, online = false, city = "Bangkok", vipTierId = "vip_2", vipTierName = "VIP 2 Glow", premium = true, gender = "Male"),
-        UserCard("u3", "Ava", 24, SampleMedia.portrait4, verified = true, distanceKm = 1, online = true, city = "Bangkok", vipTierId = "vip_3", vipTierName = "VIP 3 Pulse", premium = true, gender = "Female"),
-        UserCard("u4", "Ken", 31, SampleMedia.portrait5, verified = false, distanceKm = 6, online = false, city = "Bangkok", vipTierId = "vip_4", vipTierName = "VIP 4 Elite", premium = true, gender = "Male"),
-        UserCard("me", "You", 28, SampleMedia.portrait6, verified = true, distanceKm = null, online = true, city = "Bangkok", vipTierId = "vip_0", vipTierName = "VIP 0", premium = false, gender = "Male"),
-        UserCard("u5", "Olivia", 30, SampleMedia.portrait7, verified = true, distanceKm = 5, online = false, city = "Bangkok", vipTierId = "vip_5", vipTierName = "VIP 5 Prime", premium = true, gender = "Female"),
-        UserCard("u6", "Daniel", 32, SampleMedia.portrait8, verified = true, distanceKm = 8, online = false, city = "Bangkok", vipTierId = "vip_6", vipTierName = "VIP 6 Aura", premium = true, gender = "Male"),
-    )
-
-    private fun sampleCandidates() = listOf(
-        DiscoveryCandidate(
-            user = sampleUsers()[0],
-            bio = "Brand strategist, coffee ritualist, and a believer in long conversations over loud rooms.",
-            compatibility = 96,
-            commonInterests = listOf("Coffee", "Travel", "Architecture", "Vinyl"),
-            iceBreaker = "Which city changed your taste in people?",
-            mutualFriends = 8,
-            musicTaste = "Indie pop",
-            height = "168 cm",
-            job = "Brand Strategist",
-            relationshipGoal = "Long-term",
-            gallery = listOf(SampleMedia.portrait2, SampleMedia.landscape1, SampleMedia.landscape2),
-        ),
-        DiscoveryCandidate(
-            user = sampleUsers()[1],
-            bio = "Product designer who likes early runs, calm playlists, and people with good eye contact.",
-            compatibility = 91,
-            commonInterests = listOf("Design", "Running", "Music"),
-            iceBreaker = "What's your ideal first date pace?",
-            mutualFriends = 5,
-            musicTaste = "Electronic",
-            height = "180 cm",
-            job = "Product Designer",
-            relationshipGoal = "Relationship",
-            gallery = listOf(SampleMedia.portrait3, SampleMedia.landscape3, SampleMedia.landscape4),
-        ),
-        DiscoveryCandidate(
-            user = sampleUsers()[2],
-            bio = "Hospitality founder exploring new neighborhoods and good people.",
-            compatibility = 88,
-            commonInterests = listOf("Food", "Travel", "Startup", "Coffee"),
-            iceBreaker = "Where would you take someone for a first coffee in your city?",
-            mutualFriends = 3,
-            musicTaste = "Jazz",
-            height = "165 cm",
-            job = "Founder",
-            relationshipGoal = "Dating first",
-            gallery = listOf(SampleMedia.portrait4, SampleMedia.landscape1),
-        ),
-        DiscoveryCandidate(
-            user = sampleUsers()[3],
-            bio = "Fitness coach, anime watcher, and weekend language-exchange host.",
-            compatibility = 84,
-            commonInterests = listOf("Fitness", "Anime", "Language", "Community"),
-            iceBreaker = "If we only had 90 minutes, what would we do?",
-            mutualFriends = 2,
-            musicTaste = "Afrobeat",
-            height = "176 cm",
-            job = "Coach",
-            relationshipGoal = "Open to connection",
-            gallery = listOf(SampleMedia.portrait5, SampleMedia.portrait6, SampleMedia.landscape2),
-        ),
-    )
-
-    private fun sampleThreads() = listOf(
-        ChatThread("thread-seraphina", sampleUsers()[0], "Let's keep the coffee date idea alive.", 2, online = true, typing = true, pinned = true, matchLabel = "96% match"),
-        ChatThread("thread-elena", sampleUsers()[1], "Shared a playlist and a Saturday plan.", 0, online = false, pinned = false, matchLabel = "91% match"),
-        ChatThread("thread-chloe", sampleUsers()[2], "You were right about the rooftop bar.", 1, online = true, pinned = false, matchLabel = "88% match"),
-        ChatThread("thread-marcus", sampleUsers()[3], "Festival tickets? I am in.", 0, online = false, pinned = false, matchLabel = "84% match"),
-    )
-
-    private fun sampleTopics() = listOf(
-        CommunityTopic("travel", "Travel", "Weekend trips, city guides, and hidden gems.", SampleMedia.landscape1, "18.2K", "Mia", 12, true),
-        CommunityTopic("cafe", "Cafe", "Coffee spots, roaster reviews, and date-friendly menus.", SampleMedia.landscape2, "7.4K", "Ava", 8, true),
-        CommunityTopic("game", "Game", "Co-op nights, tournaments, and low-pressure icebreakers.", SampleMedia.landscape3, "5.1K", "Ken", 4, false),
-        CommunityTopic("anime", "Anime", "Watch parties, recommendations, and fan meetups.", SampleMedia.landscape4, "9.8K", "Noah", 6, false),
-        CommunityTopic("startup", "Startup", "Founders, operators, and creative builders.", SampleMedia.portrait8, "11.2K", "Mia", 7, false),
-    )
-
-    private fun sampleEvents() = listOf(
-        EventItem("e1", "Sunset Coffee Crawl", "Offline", "Fri, 7:00 PM", "Thao Dien, Ho Chi Minh City", "$12", SampleMedia.landscape1, "42 joined", true),
-        EventItem("e2", "Language Exchange Night", "Online", "Sat, 8:30 PM", "Zoom", "Free", SampleMedia.landscape2, "126 joined", false),
-        EventItem("e3", "Speed Dating Social", "Offline", "Sun, 6:00 PM", "District 1", "$19", SampleMedia.landscape3, "61 joined", false),
-        EventItem("e4", "Hiking + Brunch", "Offline", "Next Tue", "Dalat", "$24", SampleMedia.landscape4, "18 joined", false),
+    private fun emptyDiscoveryCandidate() = DiscoveryCandidate(
+        candidateId = "",
+        user = emptyUserCard(),
+        bio = "",
+        compatibility = 0,
+        commonInterests = emptyList(),
+        iceBreaker = "",
+        mutualFriends = 0,
+        musicTaste = "",
+        height = "",
+        job = "",
+        relationshipGoal = "",
+        gallery = emptyList(),
+        voiceIntro = false,
+        videoIntro = false,
     )
 
     private fun syncCommunity() {

@@ -18,4 +18,6 @@ data class ChatAttachmentDraft(
     val mimeType: String,
     val durationSeconds: Int? = null,
     val previewUri: Uri? = null,
+    val width: Int? = null,
+    val height: Int? = null,
 )

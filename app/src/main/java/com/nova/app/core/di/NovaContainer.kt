@@ -6,7 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.nova.app.core.backend.BackendRuntime
 import com.nova.app.core.backend.DefaultBackendRuntime
-import com.nova.app.core.data.FakeNovaRepository
+import com.nova.app.core.data.DefaultNovaRepository
 import com.nova.app.core.data.NovaRepository
 import com.nova.app.core.domain.CompleteAuthUseCase
 import com.nova.app.core.domain.CompleteOnboardingUseCase
@@ -48,7 +48,7 @@ import com.nova.app.core.viewmodel.ProfileConnectionsViewModel
 import com.nova.app.core.viewmodel.SearchViewModel
 
 class NovaContainer {
-    val repository: NovaRepository = FakeNovaRepository()
+    val repository: NovaRepository = DefaultNovaRepository()
     val backendRuntime: BackendRuntime = DefaultBackendRuntime()
 
     val observeSessionUseCase = ObserveSessionUseCase(repository)
@@ -175,6 +175,7 @@ class NovaViewModelFactory(
             modelClass.isAssignableFrom(DiscoverViewModel::class.java) ->
                 DiscoverViewModel(
                     observeDiscover = observeDiscoverUseCase,
+                    repository = repository,
                     likeCandidateUseCase = likeCandidateUseCase,
                     superLikeCandidateUseCase = superLikeCandidateUseCase,
                     skipCandidateUseCase = skipCandidateUseCase,
@@ -182,7 +183,7 @@ class NovaViewModelFactory(
                 )
 
             modelClass.isAssignableFrom(MessagesViewModel::class.java) ->
-                MessagesViewModel(observeMessagesUseCase)
+                MessagesViewModel(observeMessagesUseCase, repository)
 
             modelClass.isAssignableFrom(ChatViewModel::class.java) ->
                 ChatViewModel(

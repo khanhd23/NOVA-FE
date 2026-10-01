@@ -8,6 +8,8 @@ import com.nova.app.core.model.CallType
 import com.nova.app.core.model.ChatAttachmentKind
 import com.nova.app.core.model.ChatMessage
 import com.nova.app.core.model.ChatThread
+import com.nova.app.core.model.CommunityComment
+import com.nova.app.core.model.CommunityMention
 import com.nova.app.core.model.UserCard
 import java.util.Locale
 
@@ -23,6 +25,7 @@ data class BackendSession(
     val accessToken: String,
     val refreshToken: String,
     val userId: String,
+    val publicId: String = "",
     val displayName: String,
     val avatarUrl: String? = null,
     val onboardingComplete: Boolean = false,
@@ -66,8 +69,10 @@ data class BackendProfilePage(
 data class BackendSearchUser(
     val userId: String,
     val displayName: String,
+    val bio: String = "",
     val age: Int,
     val avatarUrl: String,
+    val username: String = "",
     val vipTierId: String? = null,
     val vipTierName: String? = null,
     val premium: Boolean = false,
@@ -78,6 +83,7 @@ data class BackendSearchUser(
     val gender: String = "Not specified",
     val interests: List<String> = emptyList(),
     val publicId: String = "",
+    val friend: Boolean = false,
 )
 
 data class BackendSearchPage(
@@ -85,6 +91,120 @@ data class BackendSearchPage(
     val page: Int,
     val size: Int,
     val total: Long,
+)
+
+data class BackendDiscoveryCandidate(
+    val candidateId: String,
+    val user: BackendPublicUserCard,
+    val bio: String,
+    val compatibility: Int,
+    val commonInterests: List<String> = emptyList(),
+    val iceBreaker: String,
+    val mutualFriends: Int,
+    val musicTaste: String,
+    val height: String,
+    val job: String,
+    val relationshipGoal: String,
+    val gallery: List<String> = emptyList(),
+    val voiceIntro: Boolean = true,
+    val videoIntro: Boolean = true,
+)
+
+data class BackendDiscoverResponse(
+    val items: List<BackendDiscoveryCandidate>,
+    val filters: List<String> = emptyList(),
+)
+
+data class BackendSwipeResponse(
+    val matched: Boolean,
+    val message: String,
+    val nextCandidateId: String? = null,
+)
+
+data class BackendPokeResponse(
+    val delivered: Boolean,
+    val message: String,
+    val nextCandidateId: String? = null,
+)
+
+data class BackendCommerceCatalog(
+    val vipTiers: List<BackendVipTier> = emptyList(),
+    val diamondPackages: List<BackendDiamondPackage> = emptyList(),
+    val paymentProviders: List<BackendPaymentProvider> = emptyList(),
+)
+
+data class BackendVipTier(
+    val id: String,
+    val name: String,
+    val level: Int,
+    val price: String,
+    val cycle: String,
+    val subtitle: String,
+    val badgeLabel: String,
+    val features: List<String> = emptyList(),
+    val highlighted: Boolean = false,
+    val accentColor: String = "",
+    val durationDays: Int = 30,
+)
+
+data class BackendDiamondPackage(
+    val id: String,
+    val name: String,
+    val diamonds: Int,
+    val price: String,
+    val subtitle: String,
+    val bonusLabel: String,
+    val bestValue: Boolean = false,
+    val accentColor: String = "",
+)
+
+data class BackendPaymentProvider(
+    val id: String,
+    val name: String,
+    val subtitle: String,
+    val available: Boolean = false,
+    val recommended: Boolean = false,
+    val capabilities: List<String> = emptyList(),
+)
+
+data class BackendCommerceMe(
+    val userId: String,
+    val vipActive: Boolean = false,
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val vipExpiresAt: String? = null,
+    val diamondBalance: Long = 0L,
+    val activeBenefits: List<String> = emptyList(),
+    val recentOrders: List<BackendCommerceOrder> = emptyList(),
+)
+
+data class BackendCommerceOrder(
+    val orderId: String,
+    val userId: String,
+    val purchaseType: String,
+    val productId: String,
+    val productName: String,
+    val productSubtitle: String,
+    val amount: Int,
+    val currency: String,
+    val status: String,
+    val provider: String,
+    val checkoutUrl: String? = null,
+    val qrContent: String? = null,
+    val expiresAt: String? = null,
+    val grant: BackendCommerceGrant? = null,
+    val transactionId: String? = null,
+    val failureReason: String? = null,
+)
+
+data class BackendCommerceGrant(
+    val grantType: String,
+    val vipTierId: String? = null,
+    val vipTierName: String? = null,
+    val vipExpiresAt: String? = null,
+    val diamondsAdded: Int? = null,
+    val diamondBalanceAfter: Long? = null,
+    val benefits: List<String> = emptyList(),
 )
 
 data class BackendPublicUserCard(
@@ -126,12 +246,20 @@ data class BackendChatThread(
     val updatedAt: String,
 )
 
+data class BackendChatThreadPage(
+    val items: List<BackendChatThread>,
+    val page: Int,
+    val size: Int,
+    val total: Long,
+)
+
 data class BackendChatMessage(
     val id: String,
     val threadId: String,
     val text: String,
     val sentByMe: Boolean,
     val timeLabel: String,
+    val createdAt: String? = null,
     val isVoice: Boolean = false,
     val isGif: Boolean = false,
     val isSticker: Boolean = false,
@@ -141,6 +269,8 @@ data class BackendChatMessage(
     val attachmentMimeType: String? = null,
     val attachmentName: String? = null,
     val attachmentDurationSeconds: Int? = null,
+    val attachmentWidth: Int? = null,
+    val attachmentHeight: Int? = null,
     val translatedText: String? = null,
     val isRead: Boolean = false,
     val callSummary: CallSummaryUiState? = null,
@@ -159,6 +289,7 @@ data class BackendProfileUpdateRequest(
     val bio: String? = null,
     val city: String? = null,
     val age: Int? = null,
+    val gender: String? = null,
     val photoUrl: String? = null,
     val featuredPhotos: List<String> = emptyList(),
     val interests: List<String> = emptyList(),
@@ -182,11 +313,13 @@ data class BackendDeviceTokenRequest(
 enum class BackendRealtimeEventType {
     CONNECTION_READY,
     MESSAGE_CREATED,
+    MESSAGE_UPDATED,
     MESSAGE_RECALLED,
     MESSAGE_DELETED,
     THREAD_DELETED,
     THREAD_READ,
     THREAD_TYPING,
+    USER_PRESENCE,
     CALL_STARTED,
     CALL_ANSWERED,
     CALL_ENDED,
@@ -268,8 +401,18 @@ data class BackendCommunityComment(
     val authorPremium: Boolean = false,
     val text: String,
     val timeLabel: String,
+    val createdAt: String = "",
     val mine: Boolean = false,
     val mentionedUserIds: List<String> = emptyList(),
+    val mentions: List<BackendCommunityMention> = emptyList(),
+    val authorPublicId: String = "",
+)
+
+data class BackendCommunityMention(
+    val userId: String,
+    val displayName: String,
+    val username: String = "",
+    val avatarUrl: String = "",
 )
 
 data class BackendCommunityPost(
@@ -291,6 +434,7 @@ data class BackendCommunityPost(
     val thumbnailUrl: String? = null,
     val tags: List<String> = emptyList(),
     val mentionedUserIds: List<String> = emptyList(),
+    val mentions: List<BackendCommunityMention> = emptyList(),
     val likes: Int = 0,
     val comments: Int = 0,
     val commentsPreview: List<BackendCommunityComment> = emptyList(),
@@ -298,6 +442,15 @@ data class BackendCommunityPost(
     val likedByMe: Boolean = false,
     val sharedByMe: Boolean = false,
     val timeLabel: String = "",
+    val createdAt: String = "",
+    val authorPublicId: String = "",
+)
+
+data class BackendCommunityCommentPage(
+    val items: List<BackendCommunityComment>,
+    val page: Int,
+    val size: Int,
+    val total: Long,
 )
 
 data class BackendCommunityFeed(
@@ -309,6 +462,13 @@ data class BackendCommunityFeed(
     val refreshToken: String,
     val nextCursor: String? = null,
     val hasMore: Boolean = false,
+)
+
+data class BackendCommunityPostPage(
+    val items: List<BackendCommunityPost>,
+    val page: Int,
+    val size: Int,
+    val total: Long,
 )
 
 data class BackendCommunityTopic(
@@ -388,6 +548,8 @@ data class BackendMessageAttachment(
     val name: String? = null,
     val kind: ChatAttachmentKind,
     val durationSeconds: Int? = null,
+    val width: Int? = null,
+    val height: Int? = null,
 )
 
 fun BackendPublicUserCard.toUserCard(): UserCard {
@@ -407,6 +569,55 @@ fun BackendPublicUserCard.toUserCard(): UserCard {
     )
 }
 
+fun BackendCommunityComment.toCommunityComment(): CommunityComment {
+    return CommunityComment(
+        id = id,
+        postId = postId,
+        author = UserCard(
+            id = authorId,
+            publicId = authorPublicId,
+            name = authorName.ifBlank { "Nova User" },
+            age = 0,
+            photoUrl = authorAvatarUrl,
+            vipTierId = authorVipTierId,
+            vipTierName = authorVipTierName,
+            premium = authorPremium,
+        ),
+        text = text,
+        timeLabel = timeLabel,
+        createdAt = createdAt,
+        mine = mine,
+        mentionedUserIds = mentionedUserIds,
+        mentions = mentions.map { mention ->
+            CommunityMention(
+                userId = mention.userId,
+                displayName = mention.displayName,
+                username = mention.username,
+                avatarUrl = mention.avatarUrl,
+            )
+        },
+    )
+}
+
+fun BackendDiscoveryCandidate.toDiscoveryCandidate(): com.nova.app.core.model.DiscoveryCandidate {
+    return com.nova.app.core.model.DiscoveryCandidate(
+        candidateId = candidateId,
+        user = user.toUserCard(),
+        bio = bio,
+        compatibility = compatibility,
+        commonInterests = commonInterests,
+        iceBreaker = iceBreaker,
+        mutualFriends = mutualFriends,
+        musicTaste = musicTaste,
+        height = height,
+        job = job,
+        relationshipGoal = relationshipGoal,
+        gallery = gallery,
+        voiceIntro = voiceIntro,
+        videoIntro = videoIntro,
+    )
+}
+
 fun BackendChatThread.toChatThread(): ChatThread {
     return ChatThread(
         id = id,
@@ -421,30 +632,43 @@ fun BackendChatThread.toChatThread(): ChatThread {
 }
 
 fun BackendChatMessage.toChatMessage(currentUserId: String? = null): ChatMessage {
+    val recalled = status.equals("RECALLED", ignoreCase = true)
     val resolvedKind = attachmentKind.toChatAttachmentKind() ?: if (isVoice) ChatAttachmentKind.Audio else null
     return ChatMessage(
         id = id,
         text = when {
-            status.equals("RECALLED", ignoreCase = true) && sentByMe -> "You unsent a message"
-            status.equals("RECALLED", ignoreCase = true) -> "This message was unsent"
+            recalled && sentByMe -> "You unsent a message"
+            recalled -> "This message was unsent"
             callSummary != null -> ""
             else -> text
         },
         sentByMe = sentByMe,
         timeLabel = timeLabel,
-        isVoice = isVoice || resolvedKind == ChatAttachmentKind.Audio,
-        isGif = isGif,
-        isSticker = isSticker,
-        attachmentKind = resolvedKind,
-        attachmentUrl = attachmentUrl,
-        attachmentPreviewUrl = attachmentPreviewUrl,
-        attachmentMimeType = attachmentMimeType,
-        attachmentName = attachmentName,
-        attachmentDurationSeconds = attachmentDurationSeconds,
-        translatedText = translatedText,
+        createdAt = createdAt,
+        isVoice = !recalled && (isVoice || resolvedKind == ChatAttachmentKind.Audio),
+        isGif = !recalled && isGif,
+        isSticker = !recalled && isSticker,
+        attachmentKind = if (recalled) null else resolvedKind,
+        attachmentUrl = if (recalled) null else attachmentUrl,
+        attachmentPreviewUrl = if (recalled) null else attachmentPreviewUrl,
+        attachmentMimeType = if (recalled) null else attachmentMimeType,
+        attachmentName = if (recalled) null else attachmentName,
+        attachmentDurationSeconds = if (recalled) null else attachmentDurationSeconds,
+        attachmentWidth = if (recalled) null else attachmentWidth,
+        attachmentHeight = if (recalled) null else attachmentHeight,
+        translatedText = translatedText.cleanNullableText(),
         isRead = isRead || status.equals("SEEN", ignoreCase = true) || status.equals("RECALLED", ignoreCase = true),
         callSummary = callSummary,
+        status = status.cleanMessageStatus(),
     )
+}
+
+private fun String?.cleanNullableText(): String? {
+    return this?.takeUnless { it.isBlank() || it.equals("null", ignoreCase = true) }
+}
+
+private fun String.cleanMessageStatus(): String {
+    return takeUnless { it.isBlank() || it.equals("null", ignoreCase = true) } ?: "SENT"
 }
 
 fun String?.toChatAttachmentKind(): ChatAttachmentKind? {
@@ -466,12 +690,16 @@ fun BackendRealtimeEvent.payloadBoolean(key: String): Boolean {
 }
 
 fun BackendRealtimeEvent.toChatMessage(currentUserId: String?): ChatMessage? {
-    if (type != BackendRealtimeEventType.MESSAGE_CREATED && type != BackendRealtimeEventType.MESSAGE_RECALLED) {
+    if (type != BackendRealtimeEventType.MESSAGE_CREATED &&
+        type != BackendRealtimeEventType.MESSAGE_UPDATED &&
+        type != BackendRealtimeEventType.MESSAGE_RECALLED
+    ) {
         return null
     }
 
     val callSummary = if (payload["kind"] == "CALL_LOG") payload.toCallSummary() else null
-    val status = payload["status"] ?: "SENT"
+    val status = (payload["status"] ?: "SENT").cleanMessageStatus()
+    val recalled = status.equals("RECALLED", ignoreCase = true)
     val sentByMe = currentUserId != null && actorUserId == currentUserId
     val attachmentKind = when (payload["attachmentKind"]?.uppercase(Locale.ROOT)) {
         "IMAGE" -> ChatAttachmentKind.Image
@@ -484,7 +712,7 @@ fun BackendRealtimeEvent.toChatMessage(currentUserId: String?): ChatMessage? {
         status.equals("RECALLED", ignoreCase = true) && sentByMe -> "You unsent a message"
         status.equals("RECALLED", ignoreCase = true) -> "This message was unsent"
         callSummary != null -> ""
-        else -> payload["text"].orEmpty()
+        else -> payload["text"].cleanNullableText().orEmpty()
     }
 
     return ChatMessage(
@@ -492,18 +720,22 @@ fun BackendRealtimeEvent.toChatMessage(currentUserId: String?): ChatMessage? {
         text = text,
         sentByMe = sentByMe,
         timeLabel = payload["timeLabel"].orEmpty(),
-        isVoice = payloadBoolean("voice"),
-        isGif = payloadBoolean("gif"),
-        isSticker = payloadBoolean("sticker"),
-        attachmentKind = attachmentKind,
-        attachmentUrl = payload["attachmentUrl"]?.takeIf { it.isNotBlank() },
-        attachmentPreviewUrl = payload["attachmentPreviewUrl"]?.takeIf { it.isNotBlank() },
-        attachmentMimeType = payload["attachmentMimeType"]?.takeIf { it.isNotBlank() },
-        attachmentName = payload["attachmentName"]?.takeIf { it.isNotBlank() },
-        attachmentDurationSeconds = payload["attachmentDurationSeconds"]?.toIntOrNull(),
+        createdAt = payload["createdAt"].cleanNullableText() ?: timestamp.cleanNullableText(),
+        isVoice = !recalled && payloadBoolean("voice"),
+        isGif = !recalled && payloadBoolean("gif"),
+        isSticker = !recalled && payloadBoolean("sticker"),
+        attachmentKind = if (recalled) null else attachmentKind,
+        attachmentUrl = if (recalled) null else payload["attachmentUrl"].cleanNullableText(),
+        attachmentPreviewUrl = if (recalled) null else payload["attachmentPreviewUrl"].cleanNullableText(),
+        attachmentMimeType = if (recalled) null else payload["attachmentMimeType"].cleanNullableText(),
+        attachmentName = if (recalled) null else payload["attachmentName"].cleanNullableText(),
+        attachmentDurationSeconds = if (recalled) null else payload["attachmentDurationSeconds"]?.toIntOrNull(),
+        attachmentWidth = if (recalled) null else payload["attachmentWidth"]?.toIntOrNull(),
+        attachmentHeight = if (recalled) null else payload["attachmentHeight"]?.toIntOrNull(),
         translatedText = null,
         isRead = status.equals("SEEN", ignoreCase = true) || status.equals("RECALLED", ignoreCase = true),
         callSummary = callSummary,
+        status = status,
     )
 }
 
@@ -549,16 +781,20 @@ private fun Map<String, String>.toCallSummaryOrNull(): CallSummaryUiState? {
 
     return CallSummaryUiState(
         participantName = this["participantName"]
+            ?: this["peerName"]
+            ?: this["callerName"]
             ?: this["partnerName"]
             ?: this["summaryText"]
             ?: "",
         threadId = this["threadId"].orEmpty(),
         peerUserId = this["peerUserId"]
+            ?: this["callerId"]
             ?: this["partnerId"]
             ?: this["fromUserId"]
             ?: this["actorUserId"]
             ?: "",
-        callId = this["callId"]?.takeIf { it.isNotBlank() },
+        callId = this["callId"]?.takeIf { it.isNotBlank() }
+            ?: this["id"]?.takeIf { it.isNotBlank() },
         callType = callType,
         direction = direction,
         durationSeconds = this["durationSeconds"]?.toIntOrNull() ?: 0,
