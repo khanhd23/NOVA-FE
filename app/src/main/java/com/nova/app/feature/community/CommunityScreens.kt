@@ -1,9 +1,16 @@
 package com.nova.app.feature.community
 
+import com.nova.app.core.designsystem.NovaColors
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+import androidx.compose.ui.platform.LocalResources
+import androidx.annotation.StringRes
+
 import android.content.Intent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -24,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -31,7 +40,6 @@ import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -47,11 +55,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,19 +68,26 @@ import coil3.compose.AsyncImage
 import com.nova.app.core.model.CommunityComment
 import com.nova.app.core.model.CommunityPost
 import com.nova.app.core.model.CommunityUiState
+import com.nova.app.core.backend.BackendRuntimeRegistry
+import com.nova.app.core.backend.toCommunityComment
 import com.nova.app.core.state.NovaLoadState
 import com.nova.app.core.ui.ExpandableText
 import com.nova.app.core.ui.NovaBadge
 import com.nova.app.core.ui.NovaCard
 import com.nova.app.core.ui.NovaChip
-import com.nova.app.core.ui.NovaTextField
+import com.nova.app.core.ui.NovaTopLoadingBar
 import com.nova.app.core.ui.NovaTopBar
 import com.nova.app.core.ui.PostMediaPreview
 import com.nova.app.core.ui.NovaVideoView
 import com.nova.app.core.ui.VipAvatar
+import com.nova.app.core.ui.formatCount
+import com.nova.app.core.ui.formatPostTimestamp
 import com.nova.app.core.viewmodel.CommunityViewModel
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
+import kotlinx.coroutines.launch
+
+private const val COMMUNITY_COMMENT_PAGE_SIZE = 20
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,22 +95,22 @@ fun CommunityScreen(
     uiState: NovaLoadState<CommunityUiState>,
     communityViewModel: CommunityViewModel,
     notificationCount: Int,
+    onSearchClick: () -> Unit,
     onNotificationClick: () -> Unit,
     onMediaClick: (List<String>, Int) -> Unit,
     onOpenProfile: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(2) }
     var selectedPostId by rememberSaveable { mutableStateOf<String?>(null) }
     var commentDraft by rememberSaveable { mutableStateOf("") }
 
     val tabs = remember {
         listOf(
-            CommunityTab("Friends", "friends"),
-            CommunityTab("Following", "following"),
-            CommunityTab("For You", "for_you"),
+            CommunityTab(R.string.community_tab_friends, "friends"),
+            CommunityTab(R.string.community_tab_following, "following"),
+            CommunityTab(R.string.community_tab_for_you, "for_you"),
         )
     }
 
@@ -104,45 +120,26 @@ fun CommunityScreen(
 
     val data = (uiState as? NovaLoadState.Success)?.data
     val selectedPost = data?.posts?.firstOrNull { it.id == selectedPostId }
-    val filteredPosts = remember(searchQuery, data?.posts) {
-        val base = data?.posts.orEmpty()
-        if (searchQuery.isBlank()) {
-            base
-        } else {
-            val q = searchQuery.trim().lowercase()
-            base.filter { post ->
-                post.text.lowercase().contains(q) ||
-                    post.author.name.lowercase().contains(q) ||
-                    post.tags.any { it.lowercase().contains(q) } ||
-                    post.topic.lowercase().contains(q)
-            }
-        }
-    }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(modifier = Modifier.fillMaxSize()) {
             NovaTopBar(
-                title = "Community",
-                subtitle = data?.refreshToken?.takeIf { it.isNotBlank() } ?: "Trending conversations",
+                title = stringResource(R.string.community_title),
+                subtitle = stringResource(R.string.community_subtitle),
                 actions = {
-                    IconButton(onClick = { data?.let { communityViewModel.refresh(it.selectedTab) } }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onBackground)
+                    IconButton(onClick = onSearchClick) {
+                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.community_search), tint = MaterialTheme.colorScheme.onBackground)
                     }
                     Box(contentAlignment = Alignment.TopEnd) {
                         IconButton(onClick = onNotificationClick) {
-                            Icon(Icons.Default.Notifications, contentDescription = "Notifications", tint = MaterialTheme.colorScheme.onBackground)
+                            Icon(Icons.Default.Notifications, contentDescription = stringResource(R.string.notif_title), tint = MaterialTheme.colorScheme.onBackground)
                         }
                         NovaBadge(count = notificationCount, modifier = Modifier.padding(top = 8.dp, end = 8.dp))
                     }
                 }
             )
-
-            NovaTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = "Search posts, tags, people...",
-                leadingIcon = Icons.Default.Search,
-                modifier = Modifier.padding(horizontal = 24.dp)
+            NovaTopLoadingBar(
+                visible = uiState is NovaLoadState.Loading || data?.loading == true || data?.refreshing == true
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -166,7 +163,7 @@ fun CommunityScreen(
                         onClick = { selectedTabIndex = index },
                         text = {
                             Text(
-                                tab.title,
+                                stringResource(tab.titleRes),
                                 color = if (selectedTabIndex == index) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                                 fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal
                             )
@@ -196,12 +193,13 @@ fun CommunityScreen(
                         Text(uiState.message, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
                         Spacer(modifier = Modifier.height(12.dp))
                         TextButton(onClick = { communityViewModel.refresh(tabs[selectedTabIndex].slug) }) {
-                            Text(uiState.actionLabel)
+                            Text(uiState.actionLabel, color = PurpleMain)
                         }
                     }
                 }
                 is NovaLoadState.Success -> {
-                    if (filteredPosts.isEmpty()) {
+                    val stateData = uiState.data
+                    if (stateData.posts.isEmpty()) {
                         EmptyCommunityState()
                     } else {
                         LazyColumn(
@@ -209,7 +207,7 @@ fun CommunityScreen(
                             contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 120.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            items(filteredPosts, key = { it.id }) { post ->
+                            items(stateData.posts, key = { it.id }) { post ->
                                 CommunityPostCard(
                                     post = post,
                                     onLike = { communityViewModel.likePost(post.id, !post.likedByMe) },
@@ -240,9 +238,9 @@ fun CommunityScreen(
                     selectedPostId = null
                     commentDraft = ""
                 },
-                onSend = {
-                    if (commentDraft.isNotBlank()) {
-                        communityViewModel.commentPost(post.id, commentDraft.trim())
+                onSend = { text ->
+                    if (text.isNotBlank()) {
+                        communityViewModel.commentPost(post.id, text.trim())
                         commentDraft = ""
                     }
                 },
@@ -275,14 +273,9 @@ private fun CommunityPostCard(
     onOpenProfile: (String) -> Unit,
 ) {
     val likeColor by animateColorAsState(
-        targetValue = if (post.likedByMe) Color(0xFFFF4D6D) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
+        targetValue = if (post.likedByMe) NovaColors.current.like else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
         label = "communityLikeColor"
     )
-    val likeScale by animateFloatAsState(
-        targetValue = if (post.likedByMe) 1.15f else 1f,
-        label = "communityLikeScale"
-    )
-
     NovaCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -314,19 +307,22 @@ private fun CommunityPostCard(
                         )
                         if (post.author.verified) {
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("Verified", color = PurpleMain, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                color = PurpleMain.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(999.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.community_verified),
+                                    color = PurpleMain,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                )
+                            }
                         }
                     }
                     Text(
-                        text = buildString {
-                            append(post.topic)
-                            if (post.author.city.isNotBlank()) {
-                                append(" · ")
-                                append(post.author.city)
-                            }
-                            append(" · ")
-                            append(post.timeLabel)
-                        },
+                        text = formatPostTimestamp(post.createdAt, post.timeLabel),
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
                         fontSize = 11.sp
                     )
@@ -344,19 +340,19 @@ private fun CommunityPostCard(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Copy link", color = MaterialTheme.colorScheme.onBackground) },
+                            text = { Text(stringResource(R.string.community_copy_link), color = MaterialTheme.colorScheme.onBackground) },
                             onClick = { showMenu = false; onShare() },
                             leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)) }
                         )
                         DropdownMenuItem(
-                            text = { Text("Hide Post", color = MaterialTheme.colorScheme.onBackground) },
+                            text = { Text(stringResource(R.string.community_hide_post), color = MaterialTheme.colorScheme.onBackground) },
                             onClick = { showMenu = false },
                             leadingIcon = { Icon(Icons.Default.VisibilityOff, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)) }
                         )
                         DropdownMenuItem(
-                            text = { Text("Report", color = Color.Red) },
+                            text = { Text(stringResource(R.string.community_report), color = NovaColors.current.danger) },
                             onClick = { showMenu = false },
-                            leadingIcon = { Icon(Icons.Default.Report, contentDescription = null, tint = Color.Red) }
+                            leadingIcon = { Icon(Icons.Default.Report, contentDescription = null, tint = NovaColors.current.danger) }
                         )
                     }
                 }
@@ -364,7 +360,11 @@ private fun CommunityPostCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            ExpandableText(text = post.text)
+            ExpandableText(
+                text = post.text,
+                mentions = post.mentions,
+                onMentionClick = onOpenProfile,
+            )
 
             if (post.tags.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(10.dp))
@@ -384,56 +384,32 @@ private fun CommunityPostCard(
                 )
             }
 
-            if (post.commentsPreview.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    post.commentsPreview.take(2).forEach { comment ->
-                        CommentPreview(comment = comment, onOpenProfile = onOpenProfile)
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onLike) {
-                    Icon(
-                        imageVector = if (post.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = null,
-                        tint = likeColor,
-                        modifier = Modifier.graphicsLayer(scaleX = likeScale, scaleY = likeScale).size(20.dp)
-                    )
-                }
-                Text(post.likes.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), fontSize = 12.sp)
-
-                Spacer(modifier = Modifier.size(8.dp))
-
-                IconButton(onClick = onComment) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
-                }
-                Text(post.comments.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), fontSize = 12.sp)
-
-                Spacer(modifier = Modifier.size(8.dp))
-
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
-                }
-                Text(post.shares.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), fontSize = 12.sp)
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                Surface(
-                    color = PurpleMain.copy(alpha = 0.10f),
-                    shape = RoundedCornerShape(999.dp)
-                ) {
-                    Text(
-                        text = post.postType.uppercase(),
-                        color = PurplePink,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                PostActionButton(
+                    icon = if (post.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    count = post.likes,
+                    tint = likeColor,
+                    containerColor = if (post.likedByMe) NovaColors.current.like.copy(alpha = 0.16f) else NovaColors.current.like.copy(alpha = 0.08f),
+                    onClick = onLike,
+                )
+                PostActionButton(
+                    icon = Icons.Default.ChatBubbleOutline,
+                    count = post.comments,
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                    onClick = onComment,
+                )
+                PostActionButton(
+                    icon = Icons.Default.Share,
+                    count = post.shares,
+                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.09f),
+                    onClick = onShare,
+                )
             }
         }
     }
@@ -454,18 +430,57 @@ private fun CommunityMediaPreview(
 }
 
 @Composable
+private fun PostActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    count: Int,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .height(38.dp)
+            .widthIn(min = 64.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick),
+        color = containerColor,
+        shape = RoundedCornerShape(999.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            if (count > 0) {
+                Spacer(modifier = Modifier.size(5.dp))
+                Text(
+                    text = formatCount(count),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun CommentPreview(
     comment: CommunityComment,
     onOpenProfile: (String) -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.clickable { onOpenProfile(comment.author.id) }
+        modifier = Modifier.fillMaxWidth()
     ) {
         VipAvatar(
             imageUrl = comment.author.photoUrl,
             contentDescription = comment.author.name,
-            modifier = Modifier.size(28.dp),
+            modifier = Modifier
+                .size(28.dp)
+                .clickable { onOpenProfile(comment.author.id) },
             vipTierId = comment.author.vipTierId,
             premium = comment.author.premium,
             borderWidth = 1.2.dp,
@@ -477,12 +492,14 @@ private fun CommentPreview(
                 text = comment.author.name,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp
+                fontSize = 12.sp,
+                modifier = Modifier.clickable { onOpenProfile(comment.author.id) },
             )
-            Text(
+            ExpandableText(
                 text = comment.text,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
-                fontSize = 12.sp
+                collapsedMaxLines = 2,
+                mentions = comment.mentions,
+                onMentionClick = onOpenProfile,
             )
         }
     }
@@ -495,9 +512,42 @@ private fun CommentBottomSheet(
     commentDraft: String,
     onCommentDraftChange: (String) -> Unit,
     onDismiss: () -> Unit,
-    onSend: () -> Unit,
+    onSend: (String) -> Unit,
     onOpenProfile: (String) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    val res = LocalResources.current
+    var comments by remember(post.id) { mutableStateOf(post.commentsPreview) }
+    var commentPage by rememberSaveable(post.id) { mutableIntStateOf(0) }
+    var commentTotal by rememberSaveable(post.id) { mutableStateOf(post.commentsPreview.size.toLong()) }
+    var commentsLoading by rememberSaveable(post.id) { mutableStateOf(false) }
+    var commentsError by rememberSaveable(post.id) { mutableStateOf<String?>(null) }
+    var replyingTo by remember(post.id) { mutableStateOf<CommunityComment?>(null) }
+
+    suspend fun loadComments(page: Int, append: Boolean) {
+        commentsLoading = true
+        commentsError = null
+        val result = BackendRuntimeRegistry.runtime?.fetchCommunityComments(post.id, page, COMMUNITY_COMMENT_PAGE_SIZE)
+        if (result == null) {
+            commentsLoading = false
+            if (!append) {
+                comments = post.commentsPreview
+                commentTotal = post.commentsPreview.size.toLong()
+            }
+            commentsError = if (comments.isEmpty()) res.getString(R.string.community_comments_failed) else null
+            return
+        }
+        val mapped = result.items.map { it.toCommunityComment() }
+        comments = if (append) comments + mapped else mapped
+        commentPage = result.page
+        commentTotal = result.total
+        commentsLoading = false
+    }
+
+    LaunchedEffect(post.id, post.comments) {
+        loadComments(page = 0, append = false)
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -510,52 +560,76 @@ private fun CommentBottomSheet(
                 .padding(bottom = 16.dp)
         ) {
             Text(
-                text = "Comments",
+                text = stringResource(R.string.community_comments),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             )
 
-            Text(
-                text = post.text,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 24.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 8.dp)
             ) {
-                items(post.commentsPreview, key = { it.id }) { comment ->
-                    CommentDetailItem(comment = comment, onOpenProfile = onOpenProfile)
+                if (commentsError != null) {
+                    item {
+                        Text(
+                            text = commentsError.orEmpty(),
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                        )
+                    }
+                } else if (comments.isEmpty() && !commentsLoading) {
+                    item {
+                        Text(
+                            text = stringResource(R.string.community_no_comments),
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                        )
+                    }
+                }
+                items(comments, key = { it.id }) { comment ->
+                    CommentDetailItem(
+                        comment = comment,
+                        onOpenProfile = onOpenProfile,
+                        onReply = {
+                            replyingTo = comment
+                            val mention = "@${comment.author.name.trim().replace(" ", ".")}"
+                            if (!commentDraft.contains(mention, ignoreCase = true)) {
+                                onCommentDraftChange("$mention ")
+                            }
+                        },
+                    )
+                }
+                if (comments.size.toLong() < commentTotal) {
+                    item {
+                        TextButton(
+                            onClick = { scope.launch { loadComments(commentPage + 1, append = true) } },
+                            enabled = !commentsLoading,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                        ) {
+                            Text(if (commentsLoading) stringResource(R.string.common_loading_ellipsis) else stringResource(R.string.common_load_more), color = PurpleMain)
+                        }
+                    }
+                }
+                if (commentsLoading && comments.isEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
                 }
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NovaTextField(
-                    value = commentDraft,
-                    onValueChange = onCommentDraftChange,
-                    placeholder = "Add a comment...",
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.size(12.dp))
-                IconButton(
-                    onClick = onSend,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(PurpleMain)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Post", tint = MaterialTheme.colorScheme.onBackground)
-                }
-            }
+            CommentComposerBar(
+                value = commentDraft,
+                onValueChange = onCommentDraftChange,
+                replyingToName = replyingTo?.author?.name,
+                onClearReply = { replyingTo = null },
+                onSend = {
+                    onSend(commentDraft)
+                    replyingTo = null
+                },
+            )
         }
     }
 }
@@ -564,38 +638,156 @@ private fun CommentBottomSheet(
 private fun CommentDetailItem(
     comment: CommunityComment,
     onOpenProfile: (String) -> Unit,
+    onReply: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 12.dp)
-            .clickable { onOpenProfile(comment.author.id) }
+            .padding(horizontal = 24.dp, vertical = 8.dp)
     ) {
         VipAvatar(
             imageUrl = comment.author.photoUrl,
             contentDescription = comment.author.name,
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier
+                .size(32.dp)
+                .clickable { onOpenProfile(comment.author.id) },
             vipTierId = comment.author.vipTierId,
             premium = comment.author.premium,
             borderWidth = 1.5.dp,
             padding = 2.dp,
         )
         Spacer(modifier = Modifier.size(12.dp))
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    comment.author.name,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
-                if (comment.mine) {
-                    Spacer(modifier = Modifier.size(6.dp))
-                    Text("You", color = PurpleMain, fontSize = 10.sp)
+        Column(modifier = Modifier.weight(1f)) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            comment.author.name,
+                            color = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) {
+                                Color(0xFF111111)
+                            } else {
+                                MaterialTheme.colorScheme.onBackground
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            modifier = Modifier.clickable { onOpenProfile(comment.author.id) },
+                        )
+                        if (comment.mine) {
+                            Spacer(modifier = Modifier.size(6.dp))
+                            Text(stringResource(R.string.community_you), color = PurpleMain, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(3.dp))
+                    ExpandableText(
+                        text = comment.text,
+                        collapsedMaxLines = 4,
+                        mentions = comment.mentions,
+                        onMentionClick = onOpenProfile,
+                    )
                 }
             }
-            Text(comment.text, color = Color.LightGray, fontSize = 12.sp)
-            Text(comment.timeLabel, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+            Row(
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    formatPostTimestamp(comment.createdAt, comment.timeLabel),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    stringResource(R.string.community_reply),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.66f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(onClick = onReply),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommentComposerBar(
+    value: String,
+    onValueChange: (String) -> Unit,
+    replyingToName: String?,
+    onClearReply: () -> Unit,
+    onSend: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        if (!replyingToName.isNullOrBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.community_replying_to, replyingToName.orEmpty()),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = stringResource(R.string.common_cancel),
+                    color = PurpleMain,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(onClick = onClearReply),
+                )
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val shape = RoundedCornerShape(28.dp)
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = TextStyle(
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 14.sp,
+                ),
+                maxLines = 4,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f), shape)
+                    .padding(horizontal = 16.dp),
+                decorationBox = { innerTextField ->
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                        if (value.isBlank()) {
+                            Text(
+                                text = if (replyingToName.isNullOrBlank()) stringResource(R.string.community_add_comment) else stringResource(R.string.community_write_reply),
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
+                                fontSize = 14.sp,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+            )
+            Spacer(modifier = Modifier.size(10.dp))
+            IconButton(
+                onClick = onSend,
+                enabled = value.isNotBlank(),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(if (value.isNotBlank()) PurpleMain else MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.community_post), tint = MaterialTheme.colorScheme.onBackground)
+            }
         }
     }
 }
@@ -608,13 +800,13 @@ private fun EmptyCommunityState() {
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "No posts yet",
+            text = stringResource(R.string.community_no_posts),
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.size(8.dp))
         Text(
-            text = "Refresh or create a new post to start the feed.",
+            text = stringResource(R.string.community_no_posts_desc),
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             fontSize = 12.sp
         )
@@ -632,10 +824,10 @@ private fun shareCommunityPost(
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, "${post.author.name}: ${post.text.take(120)}\n$link")
     }
-    context.startActivity(Intent.createChooser(intent, "Share post"))
+    context.startActivity(Intent.createChooser(intent, context.getString(R.string.community_share_post)))
 }
 
-private data class CommunityTab(val title: String, val slug: String)
+private data class CommunityTab(@StringRes val titleRes: Int, val slug: String)
 
 private fun fallbackAvatarUrl(name: String): String {
     val safeName = if (name.isBlank()) "Nova User" else name.trim()

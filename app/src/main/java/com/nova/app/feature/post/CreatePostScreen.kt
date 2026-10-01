@@ -1,5 +1,11 @@
 package com.nova.app.feature.post
 
+import com.nova.app.core.designsystem.NovaBrand
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+import androidx.compose.ui.platform.LocalResources
+
 import android.Manifest
 import android.graphics.Bitmap
 import android.content.ContentUris
@@ -32,7 +38,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -85,10 +91,9 @@ import com.nova.app.core.backend.BackendRuntimeRegistry
 import com.nova.app.core.backend.BackendSearchUser
 import com.nova.app.core.model.ChatAttachmentKind
 import com.nova.app.core.model.CreatePostDraft
-import com.nova.app.core.ui.NovaVideoView
+import com.nova.app.core.ui.VideoPosterPreview
 import com.nova.app.core.state.NovaLoadState
 import com.nova.app.core.viewmodel.CommunityViewModel
-import com.nova.app.ui.theme.BgCardDark
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
 import kotlinx.coroutines.launch
@@ -120,6 +125,7 @@ fun CreatePostScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val res = LocalResources.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
@@ -182,7 +188,7 @@ fun CreatePostScreen(
                     val name = readDisplayName(context, uri)
                     val size = readMediaSize(context, uri)
                     if (kind == ChatAttachmentKind.Video && (size ?: 0L) > MAX_VIDEO_BYTES) {
-                        composerError = "Video must be 50 MB or smaller"
+                        composerError = res.getString(R.string.post_err_video_size)
                         null
                     } else {
                         ComposerMedia(
@@ -197,7 +203,7 @@ fun CreatePostScreen(
                 if (picked.isNotEmpty()) {
                     selectedMedia = appendPickedMedia(selectedMedia, picked)
                     if (selectedMedia.isEmpty()) {
-                        composerError = "No valid media selected"
+                        composerError = res.getString(R.string.post_err_no_media)
                     } else {
                         composerError = null
                     }
@@ -222,7 +228,7 @@ fun CreatePostScreen(
                     selectedMedia = appendPickedMedia(selectedMedia, listOf(capturedMedia))
                     composerError = null
                 } else {
-                    composerError = "Unable to save camera photo"
+                    composerError = res.getString(R.string.post_err_camera)
                 }
             }
         }
@@ -246,33 +252,57 @@ fun CreatePostScreen(
     }
 
     LaunchedEffect(mentionQuery, activeMode) {
-        if (activeMode == InputMode.Mention && mentionQuery.isNotBlank()) {
-            val results = BackendRuntimeRegistry.runtime?.searchUsers(mentionQuery, page = 0, size = 6)
-            mentionSuggestions = results?.items?.map {
-                BackendSearchUser(
-                    userId = it.userId,
-                    displayName = it.displayName,
-                    age = it.age,
-                    avatarUrl = it.avatarUrl,
-                    verified = it.verified,
-                    distanceKm = it.distanceKm,
-                    online = it.online,
-                    city = it.city,
-                    gender = it.gender,
-                    interests = it.interests,
-                )
-            } ?: localMentionSuggestions()
-        } else {
-            mentionSuggestions = localMentionSuggestions()
+        if (activeMode == InputMode.Mention) {
+            val runtime = BackendRuntimeRegistry.runtime
+            val session = runtime?.currentSession()
+            mentionSuggestions = if (runtime != null && session != null) {
+                if (mentionQuery.isBlank()) {
+                    runtime.fetchProfileRelations(session.userId, "friends", page = 0, size = 20)
+                        ?.items
+                        ?.map { profile ->
+                            BackendSearchUser(
+                                userId = profile.userId,
+                                displayName = profile.displayName,
+                                bio = profile.bio,
+                                age = profile.age,
+                                avatarUrl = profile.avatarUrl,
+                                username = profile.username,
+                                vipTierId = profile.vipTierId,
+                                vipTierName = profile.vipTierName,
+                                premium = profile.premium,
+                                verified = profile.verified,
+                                online = profile.online,
+                                city = profile.city,
+                                gender = profile.gender,
+                                interests = profile.interests,
+                                publicId = profile.publicId,
+                                friend = true,
+                            )
+                        }
+                        .orEmpty()
+                } else {
+                    runtime.searchUsers(mentionQuery, page = 0, size = 12)
+                        ?.items
+                        ?.filter { it.userId != session.userId }
+                        ?.filter { it.friend }
+                        ?.sortedWith(compareByDescending<BackendSearchUser> { it.userId in selectedMentionIds }
+                            .thenByDescending { it.online }
+                            .thenBy { it.displayName })
+                        ?.take(8)
+                        .orEmpty()
+                }
+            } else {
+                emptyList()
+            }
         }
     }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Create Post", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.post_create_title), fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 actions = {
@@ -286,14 +316,14 @@ fun CreatePostScreen(
                                 val tags = extractTags(plainText)
                                 val uploadedAssets = uploadComposerMedia(context, selectedMedia)
                                 if (selectedMedia.isNotEmpty() && uploadedAssets.isEmpty()) {
-                                    composerError = "Upload failed. Please try again."
+                                    composerError = res.getString(R.string.post_err_upload)
                                     isPosting = false
                                     return@launch
                                 }
                                 val uploadedUrls = uploadedAssets.map { it.url }
                                 val uploadedThumb = uploadedAssets.firstNotNullOfOrNull { it.previewUrl }
                                     ?: uploadedAssets.firstOrNull()?.previewUrl
-                                communityViewModel.publishPost(
+                                val published = communityViewModel.publishPost(
                                     CreatePostDraft(
                                         topicId = publishTopicId,
                                         text = plainText,
@@ -306,23 +336,35 @@ fun CreatePostScreen(
                                     )
                                 )
                                 isPosting = false
-                                onPublished()
-                                onBack()
+                                if (published) {
+                                    onPublished()
+                                    onBack()
+                                } else {
+                                    composerError = res.getString(R.string.post_err_post)
+                                }
                             }
                         },
                         enabled = !isPosting && (composer.text.isNotBlank() || selectedMedia.isNotEmpty()),
-                        colors = ButtonDefaults.buttonColors(containerColor = PurpleMain),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NovaBrand.Start,
+                            contentColor = Color.White,
+                        ),
                         shape = RoundedCornerShape(20.dp),
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         if (isPosting) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
                         } else {
-                            Text("Post", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.community_post), color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgCardDark)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                )
             )
         },
         bottomBar = {
@@ -336,11 +378,11 @@ fun CreatePostScreen(
                     InputMode.Hashtag -> {
                         SuggestionPanel(
                             height = suggestionListHeight,
-                            title = "Trending hashtags",
+                            title = stringResource(R.string.post_trending_hashtags),
                             highlightPrefix = "#",
                             textSuggestions = tagSuggestions.map { suggestion ->
                                 val label = "#${suggestion.tag}"
-                                val subtitle = "${suggestion.hotness} hot"
+                                val subtitle = stringResource(R.string.post_hotness, suggestion.hotness.toString())
                                 SuggestionRowItem(label, subtitle)
                             },
                             onSelectText = { label ->
@@ -355,12 +397,13 @@ fun CreatePostScreen(
                     InputMode.Mention -> {
                         SuggestionPanel(
                             height = suggestionListHeight,
-                            title = "Tag friends",
+                            title = stringResource(R.string.post_tag_friends),
                             highlightPrefix = "@",
                             mentionSuggestions = mentionSuggestions.map { user ->
+                                val handle = user.username.ifBlank { user.publicId.ifBlank { user.displayName.asMentionHandle() } }
                                 SuggestionRowItem(
-                                    label = "@${user.displayName}",
-                                    subtitle = if (user.online) "Active now" else user.city.ifBlank { user.interests.take(2).joinToString(" / ") },
+                                    label = "@$handle",
+                                    subtitle = if (user.online) stringResource(R.string.post_active_now) else user.city.ifBlank { user.interests.take(2).joinToString(" / ") },
                                     avatarUrl = user.avatarUrl,
                                     userId = user.userId,
                                 )
@@ -460,7 +503,7 @@ fun CreatePostScreen(
                 }
             }
         },
-        containerColor = BgCardDark
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(
@@ -482,16 +525,21 @@ fun CreatePostScreen(
                                 activeMode = InputMode.Keyboard
                             }
                         },
-                    textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
-                    placeholder = { Text("What's on your mind?", color = Color.Gray) },
+                    textStyle = TextStyle(color = MaterialTheme.colorScheme.onBackground, fontSize = 16.sp),
+                    placeholder = {
+                        Text(
+                            stringResource(R.string.post_whats_on_mind),
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.52f),
+                        )
+                    },
                     minLines = 2,
                     maxLines = 6,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PurpleMain,
                         unfocusedBorderColor = Color.Transparent,
                         cursorColor = PurpleMain,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
+                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent
                     )
@@ -658,25 +706,15 @@ private fun MediaPreviewTile(
             .border(1.dp, PurpleMain.copy(alpha = 0.45f), shape)
     ) {
         if (item.kind == ChatAttachmentKind.Video) {
-            NovaVideoView(
-                url = item.uri.toString(),
+            VideoPosterPreview(
+                videoUrl = item.uri.toString(),
+                thumbnailUrl = null,
                 modifier = Modifier.fillMaxSize(),
-                autoPlay = false,
-                showControls = false,
+                label = stringResource(R.string.chat_video),
+                showPlayBadge = true,
+                playBadgeSize = 54.dp,
+                playIconSize = 32.dp,
             )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.88f),
-                    modifier = Modifier.size(44.dp)
-                )
-            }
         } else {
             AsyncImage(
                 model = item.uri,
@@ -696,7 +734,7 @@ private fun MediaPreviewTile(
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = if (item.kind == ChatAttachmentKind.Video) "Video" else "Photo",
+                    text = if (item.kind == ChatAttachmentKind.Video) stringResource(R.string.chat_video) else stringResource(R.string.chat_photo),
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
@@ -758,7 +796,7 @@ private fun SuggestionPanel(
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)),
-        color = BgCardDark,
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 8.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -779,7 +817,7 @@ private fun SuggestionPanel(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color.DarkGray),
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
                             if (item.avatarUrl != null) {
@@ -792,7 +830,7 @@ private fun SuggestionPanel(
                             } else {
                                 Text(
                                     text = if (highlightPrefix == "#") "#" else "@",
-                                    color = Color.Gray,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -801,11 +839,11 @@ private fun SuggestionPanel(
                         Spacer(modifier = Modifier.size(12.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(item.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(item.subtitle, color = Color.Gray, fontSize = 11.sp)
+                            Text(item.label, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(item.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
                     }
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.42f))
                 }
             }
         }
@@ -820,7 +858,7 @@ private fun PostToolbar(
     onFullGalleryClick: () -> Unit
 ) {
     Surface(
-        color = BgCardDark,
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -840,11 +878,15 @@ private fun PostToolbar(
 
             if (activeMode == InputMode.Gallery) {
                 TextButton(onClick = onFullGalleryClick) {
-                    Text("Photos & videos", color = PurpleMain)
+                    Text(stringResource(R.string.post_photos_videos), color = PurpleMain)
                 }
             } else {
                 IconButton(onClick = { onModeChange(InputMode.Keyboard) }) {
-                    Icon(Icons.Default.Keyboard, contentDescription = "Keyboard", tint = if (activeMode == InputMode.Keyboard) PurpleMain else Color.Gray)
+                    Icon(
+                        Icons.Default.Keyboard,
+                        contentDescription = stringResource(R.string.post_keyboard),
+                        tint = if (activeMode == InputMode.Keyboard) PurpleMain else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -854,7 +896,7 @@ private fun PostToolbar(
 @Composable
 private fun ToolbarIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, isSelected: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick) {
-        Icon(icon, contentDescription = null, tint = if (isSelected) PurpleMain else Color.Gray)
+        Icon(icon, contentDescription = null, tint = if (isSelected) PurpleMain else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -867,7 +909,7 @@ private fun ToolbarSymbol(symbol: String, isSelected: Boolean, onClick: () -> Un
             .padding(8.dp),
         fontSize = 22.sp,
         fontWeight = FontWeight.Bold,
-        color = if (isSelected) PurpleMain else Color.Gray
+        color = if (isSelected) PurpleMain else MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 
@@ -890,7 +932,7 @@ private fun GalleryPanel(
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
-            .background(BgCardDark)
+            .background(MaterialTheme.colorScheme.surface)
     ) {
         LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(galleryItems.chunked(3)) { row ->
@@ -963,7 +1005,7 @@ private fun GalleryThumbnailTile(
                     .padding(8.dp)
                     .size(22.dp)
                     .clip(CircleShape)
-                    .background(PurpleMain),
+                    .background(NovaBrand.Start),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -986,7 +1028,7 @@ private fun CameraTile(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .border(1.dp, PurpleMain.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-            .background(Color(0xFF1C1628))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -998,8 +1040,8 @@ private fun CameraTile(
                 modifier = Modifier.size(28.dp)
             )
             Text(
-                text = "Camera",
-                color = Color.White,
+                text = stringResource(R.string.post_camera),
+                color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1013,7 +1055,7 @@ private fun EmojiPanel(height: androidx.compose.ui.unit.Dp, onEmojiSelect: (Stri
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
-            .background(BgCardDark)
+            .background(MaterialTheme.colorScheme.surface)
     ) {
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(emojis.chunked(6)) { row ->
@@ -1295,19 +1337,17 @@ private fun localTagSuggestions(query: String): List<BackendCommunityTagSuggesti
         )
 }
 
-private fun localMentionSuggestions(): List<BackendSearchUser> {
-    return listOf(
-        BackendSearchUser("u-seraphina", "Seraphina Vale", 27, fallbackAvatarUrl("Seraphina Vale"), verified = true, online = true, city = "Lagos", gender = "Female", interests = listOf("Product", "Messaging")),
-        BackendSearchUser("u-elena", "Elena Markov", 25, fallbackAvatarUrl("Elena Markov"), verified = true, online = false, city = "Amsterdam", gender = "Female", interests = listOf("Community", "Events")),
-        BackendSearchUser("u-chloe", "Chloe Rivera", 24, fallbackAvatarUrl("Chloe Rivera"), verified = true, online = true, city = "Barcelona", gender = "Female", interests = listOf("Photography", "Travel")),
-        BackendSearchUser("u-marcus", "Marcus Reed", 29, fallbackAvatarUrl("Marcus Reed"), verified = false, online = false, city = "Berlin", gender = "Male", interests = listOf("Android", "Build systems")),
-    )
-}
-
 private fun fallbackAvatarUrl(name: String): String {
     val safeName = if (name.isBlank()) "Nova User" else name.trim()
     val encoded = java.net.URLEncoder.encode(safeName, Charsets.UTF_8)
     return "https://ui-avatars.com/api/?name=$encoded&background=6C5CE7&color=FFFFFF&size=512"
+}
+
+private fun String.asMentionHandle(): String {
+    return trim()
+        .replace(Regex("\\s+"), ".")
+        .replace(Regex("[^\\p{L}0-9_.-]"), "")
+        .ifBlank { "user" }
 }
 
 private fun suggestionPanelHeight(screenHeight: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp {
