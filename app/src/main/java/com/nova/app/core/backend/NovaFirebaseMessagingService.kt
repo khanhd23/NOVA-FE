@@ -48,9 +48,11 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
             // notification is owned by CallForegroundService while the call is alive.
             "CALL_ANSWERED", "CALL_MINIMIZED" -> cancelCallNotification(data)
             "CALL_ENDED" -> showCallEndedNotification(data)
-            "MESSAGE_CREATED", "MESSAGE_RECALLED", "MESSAGE_DELETED", "THREAD_DELETED", "THREAD_READ", "THREAD_TYPING" -> {
-                showMessageNotification(data)
-            }
+            "MESSAGE_CREATED" -> showMessageNotification(data)
+            // Every realtime event is also pushed; only new messages deserve a notification.
+            // Read, deleted or recalled: clear the stale message notification. Typing: ignore.
+            "MESSAGE_RECALLED", "MESSAGE_DELETED", "THREAD_DELETED", "THREAD_READ" -> cancelMessageNotification(data)
+            "THREAD_TYPING" -> Unit
             "NOTIFICATION_CREATED" -> showNotificationCreated(data)
             else -> showGenericNotification(data)
         }
@@ -220,6 +222,13 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
             .build()
 
         manager.notify(callPayload.notificationId, notification)
+    }
+
+    private fun cancelMessageNotification(data: Map<String, String>) {
+        val threadId = data["threadId"].orEmpty()
+        if (threadId.isBlank()) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(chatNotificationId(threadId))
     }
 
     private fun showMessageNotification(data: Map<String, String>) {
