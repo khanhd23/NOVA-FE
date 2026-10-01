@@ -1,5 +1,10 @@
 ﻿package com.nova.app.feature.profile
 
+import com.nova.app.core.designsystem.NovaColors
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +44,7 @@ fun ProfileIdentityRow(
     id: String,
     centered: Boolean = true,
     modifier: Modifier = Modifier,
+    contentColor: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -52,22 +58,22 @@ fun ProfileIdentityRow(
         horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
     ) {
         Text(
-            text = "ID: $displayId",
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+            text = stringResource(R.string.community_id_label, displayId),
+            color = contentColor.copy(alpha = 0.72f),
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
         )
         IconButton(
             onClick = {
                 clipboardManager.setText(AnnotatedString(displayId))
-                Toast.makeText(context, "\u0110\u00e3 copy", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.copied), Toast.LENGTH_SHORT).show()
             },
             modifier = Modifier.height(24.dp),
         ) {
             Icon(
                 imageVector = Icons.Default.ContentCopy,
-                contentDescription = "Copy ID",
-                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+                contentDescription = stringResource(R.string.profile_copy_id),
+                tint = contentColor.copy(alpha = 0.72f),
                 modifier = Modifier.padding(1.dp).size(15.dp),
             )
         }
@@ -88,14 +94,14 @@ fun ProfileGenderIcon(
         else -> Icons.Default.Person
     }
     val tint = when {
-        isFemale -> Color(0xFFFF6FA8)
-        isMale -> Color(0xFF6EC1FF)
+        isFemale -> NovaColors.current.female
+        isMale -> NovaColors.current.male
         else -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
     }
 
     Icon(
         imageVector = icon,
-        contentDescription = gender.ifBlank { "Gender" },
+        contentDescription = gender.ifBlank { stringResource(R.string.setup_gender) },
         tint = tint,
         modifier = modifier,
     )
@@ -107,7 +113,7 @@ fun ProfileBioText(
     modifier: Modifier = Modifier,
 ) {
     Text(
-        text = bio.ifBlank { "Tell people what makes your profile interesting." },
+        text = bio.ifBlank { stringResource(R.string.profile_bio_empty) },
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
         style = MaterialTheme.typography.bodyMedium,
@@ -130,25 +136,25 @@ fun ProfileConnectionStatsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ProfileStatColumn(
-            label = "Following",
+            label = stringResource(R.string.community_tab_following),
             value = formatCount(followingCount),
             modifier = Modifier.weight(1f),
             onClick = { onOpenConnections("following") },
         )
         ProfileStatColumn(
-            label = "Followers",
+            label = stringResource(R.string.profile_followers),
             value = formatCount(followersCount),
             modifier = Modifier.weight(1f),
             onClick = { onOpenConnections("followers") },
         )
         ProfileStatColumn(
-            label = "Friends",
+            label = stringResource(R.string.community_tab_friends),
             value = formatCount(friendsCount),
             modifier = Modifier.weight(1f),
             onClick = { onOpenConnections("friends") },
         )
         ProfileStatColumn(
-            label = "Hotness",
+            label = stringResource(R.string.profile_hotness),
             value = formatCount(deriveHotness(
                 followersCount = followersCount,
                 followingCount = followingCount,

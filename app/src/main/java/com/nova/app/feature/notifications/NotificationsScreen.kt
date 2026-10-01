@@ -1,5 +1,12 @@
 package com.nova.app.feature.notifications
 
+import com.nova.app.core.designsystem.NovaColors
+
+import com.nova.app.core.designsystem.NovaBrand
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +33,8 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +53,7 @@ import com.nova.app.core.model.NotificationsUiState
 import com.nova.app.core.ui.ExpandableText
 import com.nova.app.core.ui.NovaBadge
 import com.nova.app.core.ui.NovaCard
+import com.nova.app.core.ui.NovaTopLoadingBar
 import com.nova.app.core.ui.NovaTopBar
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
@@ -57,13 +67,13 @@ fun NotificationsScreen(
 ) {
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         NovaTopBar(
-            title = "Notifications",
-            subtitle = if (uiState.unreadCount > 0) "${uiState.unreadCount} unread" else "All caught up",
+            title = stringResource(R.string.notif_title),
+            subtitle = if (uiState.unreadCount > 0) stringResource(R.string.notif_unread, uiState.unreadCount) else stringResource(R.string.notif_all_caught_up),
             onBack = onBack,
             actions = {
                 Box(contentAlignment = Alignment.TopEnd) {
                     IconButton(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh), tint = MaterialTheme.colorScheme.onBackground)
                     }
                     if (uiState.unreadCount > 0) {
                         NovaBadge(count = uiState.unreadCount, modifier = Modifier.padding(top = 6.dp, end = 6.dp))
@@ -71,18 +81,19 @@ fun NotificationsScreen(
                 }
             }
         )
+        NovaTopLoadingBar(visible = uiState.loading)
 
         if (uiState.loading && uiState.items.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Loading notifications...",
+                    text = stringResource(R.string.notif_loading),
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                 )
             }
         } else if (uiState.items.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No notifications yet",
+                    text = stringResource(R.string.notif_empty),
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                 )
             }
@@ -145,7 +156,7 @@ private fun NotificationCard(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(PurplePink)
+                                .background(NovaBrand.End)
                         )
                     }
                 }
@@ -192,28 +203,34 @@ private fun notificationIcon(type: String) = when (type.uppercase()) {
     "CALL" -> Icons.Default.Call
     "FOLLOW" -> Icons.Default.Person
     "FRIEND" -> Icons.Default.People
+    "POKE" -> Icons.Default.TouchApp
+    "PROFILE_LIKE" -> Icons.Default.Favorite
     "COMMUNITY" -> Icons.Default.Public
     "EVENT" -> Icons.Default.Notifications
     else -> Icons.Default.Info
 }
 
+@Composable
 private fun notificationColor(type: String): Color = when (type.uppercase()) {
     "MESSAGE" -> PurpleMain
-    "CALL" -> Color(0xFFEF5350)
-    "FOLLOW" -> Color(0xFF7C4DFF)
-    "FRIEND" -> Color(0xFF26C6DA)
-    "COMMUNITY" -> Color(0xFF26C6DA)
-    "EVENT" -> Color(0xFF66BB6A)
-    else -> Color(0xFF9E9E9E)
+    "CALL" -> NovaColors.current.danger
+    "FOLLOW" -> PurpleMain
+    "FRIEND" -> NovaColors.current.info
+    "POKE" -> PurpleMain
+    "PROFILE_LIKE" -> PurplePink
+    "COMMUNITY" -> NovaColors.current.info
+    "EVENT" -> NovaColors.current.success
+    else -> NovaColors.current.neutral
 }
 
+@Composable
 private fun actionLabel(item: NotificationItem): String {
     val target = item.actionTarget.orEmpty()
     return when {
-        target.startsWith("profile/") -> "Open profile"
-        target.startsWith("thread/") -> "Open chat"
-        target.startsWith("community/") -> "Open community"
-        target.startsWith("call/") -> "Open chat"
-        else -> "Open"
+        target.startsWith("profile/") -> stringResource(R.string.notif_open_profile)
+        target.startsWith("thread/") -> stringResource(R.string.notif_open_chat)
+        target.startsWith("community/") -> stringResource(R.string.notif_open_community)
+        target.startsWith("call/") -> stringResource(R.string.notif_open_chat)
+        else -> stringResource(R.string.notif_open)
     }
 }

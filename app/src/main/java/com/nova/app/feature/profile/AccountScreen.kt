@@ -1,5 +1,12 @@
 package com.nova.app.feature.profile
 
+import com.nova.app.core.designsystem.NovaColors
+
+import com.nova.app.core.i18n.interestLabel
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -19,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -78,6 +86,7 @@ import com.nova.app.core.ui.PostMediaPreview
 import com.nova.app.core.ui.VipAvatar
 import com.nova.app.core.ui.VipTierChip
 import com.nova.app.core.ui.formatCount
+import com.nova.app.core.ui.formatPostTimestamp
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
 
@@ -92,11 +101,12 @@ fun AccountScreen(
     onCommentPost: (String, String) -> Unit = { _, _ -> },
     onSharePost: (String) -> Unit = {},
     onOpenMedia: (List<String>, Int) -> Unit = { _, _ -> },
+    onOpenProfile: (String) -> Unit = {},
 ) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             NovaTopBar(
-                title = "Profile",
+                title = stringResource(R.string.profile_title),
                 actions = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -110,19 +120,19 @@ fun AccountScreen(
                         Spacer(Modifier.width(8.dp))
 
                         Surface(
-                            color = Color(0xFF00E5FF).copy(alpha = 0.1f),
+                            color = NovaColors.current.diamond.copy(alpha = 0.1f),
                             shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
+                            border = BorderStroke(1.dp, NovaColors.current.diamond.copy(alpha = 0.5f))
                         ) {
                             Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Diamond, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(12.dp))
+                                Icon(Icons.Default.Diamond, contentDescription = null, tint = NovaColors.current.diamond, modifier = Modifier.size(12.dp))
                                 Spacer(Modifier.width(2.dp))
-                                Text(formatCount(profileState.diamonds), color = Color(0xFF00E5FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(formatCount(profileState.diamonds), color = NovaColors.current.diamond, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                     IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_title), tint = MaterialTheme.colorScheme.onBackground)
                     }
                 }
             )
@@ -143,17 +153,17 @@ fun AccountScreen(
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.size(8.dp))
-                        Text("Edit Profile")
+                        Text(stringResource(R.string.profile_edit))
                     }
                     Button(
                         onClick = onNewPostClick,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PurplePink, contentColor = MaterialTheme.colorScheme.onBackground),
+                        colors = ButtonDefaults.buttonColors(containerColor = PurplePink, contentColor = MaterialTheme.colorScheme.onPrimary),
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.size(8.dp))
-                        Text("New Post")
+                        Text(stringResource(R.string.profile_new_post))
                     }
                 }
 
@@ -190,6 +200,7 @@ fun AccountScreen(
                     onCommentPost = onCommentPost,
                     onSharePost = onSharePost,
                     onOpenMedia = onOpenMedia,
+                    onOpenProfile = onOpenProfile,
                 )
 
                 Spacer(modifier = Modifier.height(100.dp))
@@ -198,6 +209,7 @@ fun AccountScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileHero(
     profileState: ProfileUiState,
@@ -277,15 +289,20 @@ private fun ProfileHero(
                     }
 
                     ProfileIdentityRow(
-                        id = profileState.user.publicId,
+                        id = displayPublicId(profileState.user.publicId),
                         centered = false,
+                        contentColor = Color.White,
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Wraps to a new line instead of squeezing chips when the text is long (e.g. "Đang hoạt động").
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         NovaChip(
-                            text = if (profileState.user.online) "Online" else "Offline",
+                            text = if (profileState.user.online) stringResource(R.string.chat_online) else stringResource(R.string.chat_offline),
                             selected = profileState.user.online,
                         )
                         NovaChip(text = genderLabel(profileState.user.gender), selected = false)
@@ -311,7 +328,7 @@ private fun InterestsSection(
 ) {
     Column {
         Text(
-            text = "Interests",
+            text = stringResource(R.string.setup_interests),
             color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(bottom = 12.dp)
@@ -323,10 +340,10 @@ private fun InterestsSection(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (interests.isEmpty()) {
-                NovaChip(text = "Add interests", selected = false, onClick = onEditProfile)
+                NovaChip(text = stringResource(R.string.profile_add_interests), selected = false, onClick = onEditProfile)
             } else {
                 interests.forEach {
-                    NovaChip(text = it, selected = true)
+                    NovaChip(text = interestLabel(it), selected = true)
                 }
             }
         }
@@ -345,12 +362,12 @@ private fun FeaturedPhotosSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Featured photos",
+                text = stringResource(R.string.setup_featured_photos),
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
             )
             TextButton(onClick = onAddPhoto) {
-                Text("Edit", color = PurpleMain)
+                Text(stringResource(R.string.profile_edit_short), color = PurpleMain)
             }
         }
 
@@ -388,7 +405,7 @@ private fun FeaturedPhotoSlot(
         if (photoUrl.isBlank()) {
             Icon(
                 imageVector = Icons.Default.Add,
-                contentDescription = "Add photo",
+                contentDescription = stringResource(R.string.setup_add_photo),
                 tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                 modifier = Modifier.size(32.dp)
             )
@@ -411,6 +428,7 @@ private fun UserPostsSection(
     onCommentPost: (String, String) -> Unit,
     onSharePost: (String) -> Unit,
     onOpenMedia: (List<String>, Int) -> Unit,
+    onOpenProfile: (String) -> Unit,
 ) {
     val context = LocalContext.current
     var commentingPost by remember { mutableStateOf<CommunityPost?>(null) }
@@ -423,12 +441,12 @@ private fun UserPostsSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "My Posts",
+                text = stringResource(R.string.profile_my_posts),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             TextButton(onClick = onNewPostClick) {
-                Text("+ New Post", color = PurpleMain)
+                Text(stringResource(R.string.profile_new_post_plus), color = PurpleMain)
             }
         }
 
@@ -438,13 +456,13 @@ private fun UserPostsSection(
             NovaCard(modifier = Modifier.fillMaxWidth()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "No posts yet.",
+                        text = stringResource(R.string.profile_no_posts),
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
                         fontSize = 13.sp,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     TextButton(onClick = onNewPostClick) {
-                        Text("Create your first post", color = PurpleMain)
+                        Text(stringResource(R.string.profile_first_post), color = PurpleMain)
                     }
                 }
             }
@@ -462,6 +480,7 @@ private fun UserPostsSection(
                         shareProfilePost(context, post)
                     },
                     onOpenMedia = onOpenMedia,
+                    onOpenProfile = onOpenProfile,
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -474,7 +493,7 @@ private fun UserPostsSection(
                 commentingPost = null
                 commentDraft = ""
             },
-            title = { Text("Add comment") },
+            title = { Text(stringResource(R.string.profile_add_comment)) },
             text = {
                 Column {
                     Text(post.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -482,7 +501,7 @@ private fun UserPostsSection(
                     TextField(
                         value = commentDraft,
                         onValueChange = { commentDraft = it },
-                        placeholder = { Text("Write a comment...") },
+                        placeholder = { Text(stringResource(R.string.profile_write_comment)) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -498,7 +517,7 @@ private fun UserPostsSection(
                         commentDraft = ""
                     }
                 ) {
-                    Text("Post")
+                    Text(stringResource(R.string.community_post))
                 }
             },
             dismissButton = {
@@ -506,7 +525,7 @@ private fun UserPostsSection(
                     commentingPost = null
                     commentDraft = ""
                 }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -520,6 +539,7 @@ private fun FeedPostItem(
     onComment: () -> Unit,
     onShare: () -> Unit,
     onOpenMedia: (List<String>, Int) -> Unit,
+    onOpenProfile: (String) -> Unit,
 ) {
     NovaCard(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -548,7 +568,7 @@ private fun FeedPostItem(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = post.timeLabel.ifBlank { post.topic },
+                            text = formatPostTimestamp(post.createdAt, post.timeLabel.ifBlank { post.topic }),
                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
                             fontSize = 11.sp,
                         )
@@ -562,10 +582,10 @@ private fun FeedPostItem(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Text(
+            ExpandableText(
                 text = post.text,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontSize = 14.sp,
+                mentions = post.mentions,
+                onMentionClick = onOpenProfile,
             )
 
             if (post.tags.isNotEmpty()) {
@@ -586,35 +606,67 @@ private fun FeedPostItem(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onLike) {
-                    Icon(
-                        if (post.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = null,
-                        tint = if (post.likedByMe) Color(0xFFFF4D6D) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(post.likes.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontSize = 12.sp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ProfilePostActionButton(
+                    icon = if (post.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    count = post.likes,
+                    tint = if (post.likedByMe) NovaColors.current.like else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
+                    containerColor = if (post.likedByMe) NovaColors.current.like.copy(alpha = 0.16f) else NovaColors.current.like.copy(alpha = 0.08f),
+                    onClick = onLike,
+                )
+                ProfilePostActionButton(
+                    icon = Icons.Default.ChatBubbleOutline,
+                    count = post.comments,
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                    onClick = onComment,
+                )
+                ProfilePostActionButton(
+                    icon = Icons.Default.Share,
+                    count = post.shares,
+                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.09f),
+                    onClick = onShare,
+                )
+            }
+        }
+    }
+}
 
-                Spacer(modifier = Modifier.width(16.dp))
-
-                IconButton(onClick = onComment) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(post.comments.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontSize = 12.sp)
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(post.shares.toString(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontSize = 12.sp)
-
-                Spacer(modifier = Modifier.weight(1f))
+@Composable
+private fun ProfilePostActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    count: Int,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .height(38.dp)
+            .widthIn(min = 64.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick),
+        color = containerColor,
+        shape = RoundedCornerShape(999.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            if (count > 0) {
+                Spacer(modifier = Modifier.size(5.dp))
+                Text(
+                    text = formatCount(count),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -624,24 +676,24 @@ private fun FeedPostItem(
 private fun ImageGrid(count: Int) {
     val shape = RoundedCornerShape(16.dp)
     when (count) {
-        1 -> Box(modifier = Modifier.fillMaxWidth().height(240.dp).clip(shape).background(Color.DarkGray))
+        1 -> Box(modifier = Modifier.fillMaxWidth().height(240.dp).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
         2 -> Row(modifier = Modifier.fillMaxWidth().height(200.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray))
-            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray))
+            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
+            Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
         }
         else -> {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().height(150.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray))
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
                 }
                 Row(modifier = Modifier.fillMaxWidth().height(150.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray))
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
                         if (count > 4) {
                             Text(
                                 text = "+${count - 4}",
-                                color = MaterialTheme.colorScheme.onBackground,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.headlineMedium,
                             )
                         }
@@ -652,12 +704,13 @@ private fun ImageGrid(count: Int) {
     }
 }
 
+@Composable
 private fun genderLabel(gender: String): String {
     val normalized = gender.trim().lowercase()
     return when {
-        normalized.contains("female") || normalized.contains("woman") || normalized.contains("girl") -> "Female"
-        normalized.contains("male") || normalized.contains("man") || normalized.contains("boy") -> "Male"
-        else -> "Gender"
+        normalized.contains("female") || normalized.contains("woman") || normalized.contains("girl") -> stringResource(R.string.gender_female)
+        normalized.contains("male") || normalized.contains("man") || normalized.contains("boy") -> stringResource(R.string.gender_male)
+        else -> stringResource(R.string.setup_gender)
     }
 }
 
@@ -667,11 +720,13 @@ private fun fallbackAvatarUrl(name: String): String {
     return "https://ui-avatars.com/api/?name=$encoded&background=6C5CE7&color=FFFFFF&size=512"
 }
 
+private fun displayPublicId(publicId: String): String = publicId
+
 private fun shareProfilePost(context: android.content.Context, post: CommunityPost) {
     val link = "https://nova.app/community/post/${post.id}"
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, "${post.author.name}: ${post.text.take(120)}\n$link")
     }
-    context.startActivity(Intent.createChooser(intent, "Share post"))
+    context.startActivity(Intent.createChooser(intent, context.getString(R.string.community_share_post)))
 }

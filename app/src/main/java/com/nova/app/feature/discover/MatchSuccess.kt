@@ -1,5 +1,10 @@
 package com.nova.app.feature.discover
 
+import com.nova.app.core.designsystem.NovaBrand
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,7 +23,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nova.app.core.ui.NovaButton
-import com.nova.app.ui.theme.BgDark
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
 
@@ -38,16 +42,16 @@ fun MatchSuccessScreen(onSendMessage: () -> Unit, onKeepSwiping: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgDark.copy(alpha = 0.95f)),
+            .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "IT'S A MATCH!",
+                text = stringResource(R.string.match_title),
                 style = MaterialTheme.typography.headlineLarge.copy(
                     fontSize = 48.sp,
                     fontWeight = FontWeight.Black,
-                    brush = Brush.linearGradient(listOf(PurpleMain, PurplePink))
+                    brush = Brush.linearGradient(NovaBrand.gradient)
                 ),
                 modifier = Modifier.scale(scale)
             )
@@ -55,22 +59,22 @@ fun MatchSuccessScreen(onSendMessage: () -> Unit, onKeepSwiping: () -> Unit) {
             Spacer(modifier = Modifier.height(48.dp))
             
             Row(horizontalArrangement = Arrangement.spacedBy((-20).dp)) {
-                MatchAvatar(Color.Gray) // User
-                MatchAvatar(Color.LightGray) // Match
+                MatchAvatar(MaterialTheme.colorScheme.surfaceVariant)
+                MatchAvatar(MaterialTheme.colorScheme.surface)
             }
             
             Spacer(modifier = Modifier.height(48.dp))
             
             Text(
-                text = "You and Seraphina liked each other",
-                color = Color.White,
+                text = stringResource(R.string.match_subtitle),
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.bodyLarge
             )
             
             Spacer(modifier = Modifier.height(64.dp))
             
             NovaButton(
-                text = "Send a Message",
+                text = stringResource(R.string.match_send_message),
                 onClick = onSendMessage,
                 modifier = Modifier.padding(horizontal = 48.dp)
             )
@@ -78,8 +82,8 @@ fun MatchSuccessScreen(onSendMessage: () -> Unit, onKeepSwiping: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Keep Swiping",
-                color = Color.Gray,
+                text = stringResource(R.string.match_keep_swiping),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
                 modifier = Modifier.clickable { onKeepSwiping() },
                 style = MaterialTheme.typography.bodyMedium
             )

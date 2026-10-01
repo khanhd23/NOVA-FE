@@ -1,5 +1,14 @@
 package com.nova.app.feature.search
 
+import com.nova.app.core.designsystem.NovaBrand
+
+import com.nova.app.core.i18n.interestLabel
+
+import com.nova.app.core.i18n.localizedMessage
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,10 +32,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -42,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -50,6 +58,7 @@ import com.nova.app.core.model.SearchUiState
 import com.nova.app.core.ui.NovaCard
 import com.nova.app.core.ui.NovaChip
 import com.nova.app.core.ui.NovaTextField
+import com.nova.app.core.ui.NovaTopLoadingBar
 import com.nova.app.core.ui.NovaTopBar
 import com.nova.app.core.ui.ExpandableText
 import com.nova.app.feature.profile.ProfileIdentityRow
@@ -75,23 +84,16 @@ fun SearchScreen(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             NovaTopBar(
-                title = "Search",
-                subtitle = if (uiState.total > 0) "${uiState.total} people" else "Search people by name or ID",
+                title = stringResource(R.string.common_search),
+                subtitle = if (uiState.total > 0) stringResource(R.string.search_people_count, uiState.total.toInt()) else stringResource(R.string.search_subtitle),
                 onBack = onBack,
-                actions = {
-                    if (uiState.loading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    }
-                }
             )
+            NovaTopLoadingBar(visible = uiState.loading)
 
             NovaTextField(
                 value = uiState.query,
                 onValueChange = onQueryChange,
-                placeholder = "Search by name, ID, username",
+                placeholder = stringResource(R.string.search_hint),
                 leadingIcon = Icons.Default.Search,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
@@ -104,7 +106,11 @@ fun SearchScreen(
             ) {
                 listOf("All", "Male", "Female").forEach { gender ->
                     NovaChip(
-                        text = gender,
+                        text = when (gender) {
+                            "Male" -> stringResource(R.string.gender_male)
+                            "Female" -> stringResource(R.string.gender_female)
+                            else -> stringResource(R.string.search_all)
+                        },
                         selected = uiState.selectedGender.equals(gender, ignoreCase = true),
                         onClick = { onGenderChange(gender) }
                     )
@@ -114,7 +120,7 @@ fun SearchScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             when {
-                uiState.error != null -> ErrorState(message = uiState.error, onRetry = onRetry)
+                uiState.error != null -> ErrorState(message = localizedMessage(uiState.error), onRetry = onRetry)
                 uiState.results.isEmpty() && !uiState.loading -> EmptyState(query = uiState.query)
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -136,9 +142,9 @@ fun SearchScreen(
                                     .fillMaxWidth()
                                     .padding(top = 4.dp),
                                 shape = RoundedCornerShape(18.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = PurpleMain),
+                                colors = ButtonDefaults.buttonColors(containerColor = NovaBrand.Start),
                             ) {
-                                Text("Load more")
+                                Text(stringResource(R.string.common_load_more))
                             }
                         }
                     }
@@ -176,6 +182,8 @@ private fun SearchResultCard(
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     if (result.verified) {
                         Spacer(modifier = Modifier.size(6.dp))
@@ -189,56 +197,24 @@ private fun SearchResultCard(
                 }
                 Spacer(modifier = Modifier.size(2.dp))
                 Text(
-                    text = buildString {
-                        append(result.gender.ifBlank { "Not specified" })
-                        if (result.city.isNotBlank()) {
-                            append(" · ")
-                            append(result.city)
-                        }
-                        result.distanceKm?.let {
-                            append(" · ")
-                            append(it)
-                            append(" km")
-                        }
-                    },
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
-                    fontSize = 12.sp,
+                    text = stringResource(R.string.community_id_label, result.publicId.ifBlank { "--" }),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                if (result.publicId.isNotBlank()) {
-                    Spacer(modifier = Modifier.size(2.dp))
-                    Text(
-                        text = "ID: ${result.publicId}",
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        fontSize = 11.sp,
-                    )
-                }
-
-                Spacer(modifier = Modifier.size(10.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    result.interests.take(3).forEach { interest ->
-                        NovaChip(text = interest, selected = true)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.size(8.dp))
-
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = PurpleMain.copy(alpha = 0.12f),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    tint = PurplePink,
-                    modifier = Modifier.padding(10.dp)
+                Spacer(modifier = Modifier.size(4.dp))
+                Text(
+                    text = result.bio.ifBlank { stringResource(R.string.setup_default_bio) },
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
     }
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UserDetailSheet(
@@ -263,12 +239,12 @@ private fun UserDetailSheet(
                 Spacer(modifier = Modifier.height(8.dp))
             }
             ExpandableText(
-                text = "${user.gender.ifBlank { "Not specified" }}${if (user.city.isNotBlank()) " · ${user.city}" else ""}",
+                text = "${user.gender.ifBlank { stringResource(R.string.search_not_specified) }}${if (user.city.isNotBlank()) " · ${user.city}" else ""}",
             )
             Spacer(modifier = Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 user.interests.take(4).forEach { interest ->
-                    NovaChip(text = interest, selected = true)
+                    NovaChip(text = interestLabel(interest), selected = true)
                 }
             }
             Spacer(modifier = Modifier.height(20.dp))
@@ -276,12 +252,12 @@ private fun UserDetailSheet(
                 onClick = onMessage,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PurpleMain),
+                colors = ButtonDefaults.buttonColors(containerColor = NovaBrand.Start),
             ) {
-                Text("Message")
+                Text(stringResource(R.string.call_message))
             }
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Close")
+                Text(stringResource(R.string.common_close))
             }
         }
     }
@@ -297,7 +273,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         Text(message, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
         Spacer(modifier = Modifier.height(12.dp))
         TextButton(onClick = onRetry) {
-            Text("Retry")
+            Text(stringResource(R.string.common_retry))
         }
     }
 }
@@ -310,7 +286,7 @@ private fun EmptyState(query: String) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = if (query.isBlank()) "Type to search people" else "No results for \"$query\"",
+            text = if (query.isBlank()) stringResource(R.string.search_type_to_search) else stringResource(R.string.search_no_results_for, query),
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
         )
     }
