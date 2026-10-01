@@ -6,18 +6,27 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.nova.app.MainActivity
 import com.nova.app.R
+import com.nova.app.core.call.AppVisibility
+import com.nova.app.core.call.CallActions
+import com.nova.app.core.call.CallSystemRegistry
+import com.nova.app.core.call.IncomingCallRequest
+import com.nova.app.core.i18n.withAppLanguage
 import java.util.Locale
 
 private const val MESSAGE_CHANNEL_ID = "nova_messages"
 private const val CALL_CHANNEL_ID = "nova_calls"
+private const val INCOMING_CALL_CHANNEL_ID = "nova_calls_incoming"
+private const val INCOMING_CALL_TIMEOUT_MS = 45_000L
 private const val MESSAGE_CHANNEL_NAME = "NOVA messages"
-private const val CALL_CHANNEL_NAME = "NOVA calls"
 private const val CHANNEL_DESCRIPTION = "Chat and call updates"
 private const val SOCIAL_CHANNEL_NAME = "NOVA social"
 
@@ -35,7 +44,9 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
         val type = data["type"]?.uppercase(Locale.ROOT)
         when (type) {
             "CALL_STARTED" -> showCallNotification(data)
-            "CALL_ANSWERED", "CALL_MINIMIZED" -> showOngoingCallNotification(data)
+            // Answered (possibly on another device) or minimized: stop ringing; the ongoing-call
+            // notification is owned by CallForegroundService while the call is alive.
+            "CALL_ANSWERED", "CALL_MINIMIZED" -> cancelCallNotification(data)
             "CALL_ENDED" -> showCallEndedNotification(data)
             "MESSAGE_CREATED", "MESSAGE_RECALLED", "MESSAGE_DELETED", "THREAD_DELETED", "THREAD_READ", "THREAD_TYPING" -> {
                 showMessageNotification(data)
@@ -47,6 +58,7 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun showNotificationCreated(data: Map<String, String>) {
         when (data["kind"]?.uppercase(Locale.ROOT)) {
+            "CALL" -> Unit
             "FOLLOW", "FRIEND" -> showProfileNotification(data)
             else -> showNotificationTargetNotification(data)
         }
@@ -101,96 +113,110 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun showCallNotification(data: Map<String, String>) {
         val callPayload = buildCallPayload(data)
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureCallChannel(manager)
+        // The caller's own device shows the ongoing-call notification from the foreground service.
+        if (!callPayload.direction.equals("INCOMING", ignoreCase = true)) return
 
-        if (callPayload.direction.equals("INCOMING", ignoreCase = true)) {
-            val openCallIntent = createCallActivityIntent(ACTION_OPEN_CALL, callPayload, autoAnswer = false)
-            val answerIntent = createCallActivityIntent(ACTION_ANSWER_CALL, callPayload, autoAnswer = true)
-            val declineIntent = createDeclineIntent(callPayload)
-
-            val notification = NotificationCompat.Builder(this, CALL_CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(callPayload.title)
-                .setContentText(callPayload.body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(callPayload.body))
-                .setColor(Color.parseColor("#8B5CF6"))
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(false)
-                .setContentIntent(createActivityPendingIntent(openCallIntent, callPayload.notificationId, 0))
-                .setFullScreenIntent(createActivityPendingIntent(openCallIntent, callPayload.notificationId, 1), true)
-                .addAction(android.R.drawable.sym_call_incoming, "Answer", createActivityPendingIntent(answerIntent, callPayload.notificationId, 2))
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", createBroadcastPendingIntent(declineIntent, callPayload.notificationId, 3))
-                .build()
-
-            manager.notify(callPayload.notificationId, notification)
-        } else {
-            val openCallIntent = createCallActivityIntent(ACTION_OPEN_CALL, callPayload, autoAnswer = false)
-            val notification = NotificationCompat.Builder(this, CALL_CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(callPayload.title)
-                .setContentText(callPayload.body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(callPayload.body))
-                .setColor(Color.parseColor("#8B5CF6"))
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(false)
-                .setContentIntent(createActivityPendingIntent(openCallIntent, callPayload.notificationId, 0))
-                .build()
-
-            manager.notify(callPayload.notificationId, notification)
+        // App open (or already in a call): hand the call to the app. It rings in-app, or rejects
+        // it as busy, instead of showing a second notification.
+        val appShouldHandle = AppVisibility.isForeground || CallSystemRegistry.system?.hasActiveCall == true
+        if (appShouldHandle && CallActions.deliverIncomingCall(
+                IncomingCallRequest(
+                    callId = callPayload.callId,
+                    threadId = callPayload.threadId,
+                    peerUserId = callPayload.peerUserId,
+                    participantName = callPayload.participantName,
+                    callType = callPayload.callType,
+                )
+            )
+        ) {
+            return
         }
-    }
 
-    private fun showOngoingCallNotification(data: Map<String, String>) {
-        val callPayload = buildCallPayload(data)
+        val localized = withAppLanguage()
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureCallChannel(manager)
+        ensureIncomingCallChannel(manager, localized)
 
         val openCallIntent = createCallActivityIntent(ACTION_OPEN_CALL, callPayload, autoAnswer = false)
-        val notification = NotificationCompat.Builder(this, CALL_CHANNEL_ID)
+        val answerIntent = createCallActivityIntent(ACTION_ANSWER_CALL, callPayload, autoAnswer = true)
+        val declineIntent = createDeclineIntent(callPayload)
+        val caller = Person.Builder()
+            .setName(callPayload.participantName.ifBlank { localized.getString(R.string.call_default_name) })
+            .setImportant(true)
+            .build()
+        val text = localized.getString(
+            if (callPayload.callType == com.nova.app.core.model.CallType.Video) R.string.call_incoming_video else R.string.call_incoming_voice
+        )
+
+        val notification = NotificationCompat.Builder(this, INCOMING_CALL_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(callPayload.title)
-            .setContentText(callPayload.body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(callPayload.body))
+            .setContentTitle(caller.name)
+            .setContentText(text)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    caller,
+                    createBroadcastPendingIntent(declineIntent, callPayload.notificationId, 3),
+                    createActivityPendingIntent(answerIntent, callPayload.notificationId, 2),
+                ).setIsVideo(callPayload.callType == com.nova.app.core.model.CallType.Video)
+            )
             .setColor(Color.parseColor("#8B5CF6"))
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
-            .setOnlyAlertOnce(true)
             .setAutoCancel(false)
+            .setTimeoutAfter(INCOMING_CALL_TIMEOUT_MS)
             .setContentIntent(createActivityPendingIntent(openCallIntent, callPayload.notificationId, 0))
+            .setFullScreenIntent(createActivityPendingIntent(openCallIntent, callPayload.notificationId, 1), true)
+            .apply {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                    setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+                    setVibrate(longArrayOf(0, 800, 1200, 800, 1200))
+                }
+            }
             .build()
+            .apply { flags = flags or android.app.Notification.FLAG_INSISTENT }
 
         manager.notify(callPayload.notificationId, notification)
+    }
+
+    private fun cancelCallNotification(data: Map<String, String>) {
+        val callPayload = buildCallPayload(data)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(callPayload.notificationId)
     }
 
     private fun showCallEndedNotification(data: Map<String, String>) {
         val callPayload = buildCallPayload(data)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureCallChannel(manager)
+        // Always stop the ringing notification first.
+        manager.cancel(callPayload.notificationId)
 
-        val openChatIntent = createChatActivityIntent(callPayload.threadId, callPayload.peerUserId, callPayload.participantName, callPayload.body)
+        val endReason = data["endReason"]?.uppercase(Locale.ROOT)
+        val duration = data["durationSeconds"]?.toIntOrNull() ?: 0
+        val missed = callPayload.direction.equals("INCOMING", ignoreCase = true) &&
+            duration == 0 &&
+            endReason in setOf("MISSED", "NO_ANSWER", "CANCELED", "BUSY")
+        if (!missed) return
+
+        val localized = withAppLanguage()
+        ensureCallChannel(manager, localized)
+        val name = callPayload.participantName.ifBlank { localized.getString(R.string.call_default_name) }
+        val openChatIntent = createChatActivityIntent(callPayload.threadId, callPayload.peerUserId, name, "")
+        val callBackIntent = createCallActivityIntent(ACTION_CALL_BACK, callPayload, autoAnswer = false)
         val notification = NotificationCompat.Builder(this, CALL_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(callPayload.title.ifBlank { "Call ended" })
-            .setContentText(callPayload.body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(callPayload.body))
+            .setContentTitle(localized.getString(
+                if (callPayload.callType == com.nova.app.core.model.CallType.Video) R.string.call_missed_video else R.string.call_missed
+            ))
+            .setContentText(name)
             .setColor(Color.parseColor("#8B5CF6"))
-            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
             .setContentIntent(createActivityPendingIntent(openChatIntent, callPayload.notificationId, 0))
+            .addAction(0, localized.getString(R.string.call_again), createActivityPendingIntent(callBackIntent, callPayload.notificationId, 4))
+            .addAction(0, localized.getString(R.string.call_message), createActivityPendingIntent(openChatIntent, callPayload.notificationId, 5))
             .build()
 
         manager.notify(callPayload.notificationId, notification)
@@ -303,8 +329,13 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
     private fun buildCallPayload(data: Map<String, String>): CallNotificationPayload {
         val callId = data["callId"].orEmpty()
         val threadId = data["threadId"].orEmpty()
-        val peerUserId = data["partnerId"].orEmpty()
-        val participantName = data["partnerName"].orEmpty().ifBlank { data["title"].orEmpty() }
+        val peerUserId = data["peerUserId"].orEmpty()
+            .ifBlank { data["callerId"].orEmpty() }
+            .ifBlank { data["partnerId"].orEmpty() }
+        val participantName = data["peerName"].orEmpty()
+            .ifBlank { data["callerName"].orEmpty() }
+            .ifBlank { data["partnerName"].orEmpty() }
+            .ifBlank { data["title"].orEmpty() }
         val callType = when (data["callType"]?.uppercase(Locale.ROOT)) {
             "VIDEO" -> com.nova.app.core.model.CallType.Video
             else -> com.nova.app.core.model.CallType.Voice
@@ -433,13 +464,28 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
         )
     }
 
-    private fun ensureCallChannel(manager: NotificationManager) {
+    private fun ensureCallChannel(manager: NotificationManager, localized: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         manager.createNotificationChannel(
-            NotificationChannel(CALL_CHANNEL_ID, CALL_CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = CHANNEL_DESCRIPTION
-                setSound(null, null)
+            NotificationChannel(CALL_CHANNEL_ID, localized.getString(R.string.notif_channel_missed_calls), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+            }
+        )
+    }
+
+    private fun ensureIncomingCallChannel(manager: NotificationManager, localized: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        manager.createNotificationChannel(
+            NotificationChannel(INCOMING_CALL_CHANNEL_ID, localized.getString(R.string.notif_channel_incoming_calls), NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 800, 1200, 800, 1200)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
             }
         )

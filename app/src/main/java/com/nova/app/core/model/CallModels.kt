@@ -42,12 +42,16 @@ data class CallSessionUiState(
     val status: CallStatus = CallStatus.Idle,
     val isActive: Boolean = false,
     val isMinimized: Boolean = false,
-    val isMicOn: Boolean = true,
-    val isVideoOn: Boolean = true,
+    val isMicOn: Boolean = false,
+    val isVideoOn: Boolean = false,
     val durationSeconds: Int = 0,
     val startedAtLabel: String = "",
     val lastEventLabel: String = "",
     val endReason: CallEndReason? = null,
+    /** True once audio/video actually flows (ICE connected), not just when the call was accepted. */
+    val isMediaConnected: Boolean = false,
+    /** Media was connected but the network dropped; WebRTC is trying to recover. */
+    val isReconnecting: Boolean = false,
 ) {
     val isVideoCall: Boolean
         get() = callType == CallType.Video
@@ -74,8 +78,8 @@ data class CallSummaryUiState(
     val endReason: CallEndReason = CallEndReason.HungUp,
     val startedAtLabel: String = "",
     val endedAtLabel: String = "",
-    val isMicOn: Boolean = true,
-    val isVideoOn: Boolean = true,
+    val isMicOn: Boolean = false,
+    val isVideoOn: Boolean = false,
 )
 
 @Immutable

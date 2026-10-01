@@ -13,6 +13,12 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <application
         android:allowBackup="true"
@@ -23,6 +29,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.NOVA">
         <activity
             android:name=".MainActivity"
@@ -51,6 +58,11 @@
         <receiver
             android:name=".core.backend.IncomingCallActionReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".core.call.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
     </application>
 
 </manifest>

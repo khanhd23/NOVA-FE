@@ -13,9 +13,15 @@ import com.nova.app.core.model.CallStatus
 import com.nova.app.core.model.CallSummaryUiState
 import com.nova.app.core.model.CallType
 import com.nova.app.core.model.displayLabel
+import com.nova.app.core.webrtc.NovaWebRtcEngine
 import com.nova.app.core.webrtc.NovaWebRtcEngineRegistry
+import com.nova.app.core.webrtc.WebRtcCallState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -29,6 +35,12 @@ import java.util.Date
 import java.util.Locale
 
 private const val RING_TIMEOUT_MS = 30_000L
+/** After the call is accepted, media must connect within this window or the call is dropped. */
+private const val CONNECT_TIMEOUT_MS = 20_000L
+/** How long media may stay disconnected before we give up (WebRTC restarts ICE meanwhile). */
+private const val RECONNECT_TIMEOUT_MS = 25_000L
+const val CALL_EVENT_CONNECTING = "Connecting"
+private const val ICE_CONFIG_TIMEOUT_MS = 3_000L
 private const val TIME_LABEL_PATTERN = "HH:mm"
 
 class CallViewModel(
@@ -44,6 +56,7 @@ class CallViewModel(
     val endEvents: SharedFlow<CallEndEvent> = _endEvents.asSharedFlow()
 
     private var ringTimeoutJob: Job? = null
+    private var connectTimeoutJob: Job? = null
     private var durationJob: Job? = null
     private var callGeneration = 0L
 
@@ -99,6 +112,32 @@ class CallViewModel(
         )
     }
 
+    /**
+     * Entry point for an incoming call (realtime event or push). If another call is already
+     * in progress the new one is rejected as busy, like a phone line. Returns true if accepted
+     * for ringing.
+     */
+    fun receiveIncomingCall(
+        participantName: String,
+        threadId: String,
+        callId: String?,
+        peerUserId: String,
+        callType: CallType,
+    ): Boolean {
+        val current = _uiState.value
+        if (current.isActive && !callId.isNullOrBlank() && current.callId != callId) {
+            viewModelScope.launch {
+                runCatching { backendRuntime.endCall(callId, CallEndReason.Busy) }
+            }
+            return false
+        }
+        when (callType) {
+            CallType.Voice -> startIncomingVoiceCall(participantName, threadId, callId, peerUserId)
+            CallType.Video -> startIncomingVideoCall(participantName, threadId, callId, peerUserId)
+        }
+        return true
+    }
+
     fun answerVideoCall() {
         answerCall()
     }
@@ -110,24 +149,76 @@ class CallViewModel(
         }
 
         cancelRingTimeout()
+        val engine = NovaWebRtcEngineRegistry.engine
         _uiState.update {
             it.copy(
                 status = CallStatus.InCall,
                 isMinimized = false,
                 durationSeconds = 0,
-                lastEventLabel = "Connected",
+                lastEventLabel = CALL_EVENT_CONNECTING,
                 endReason = null,
+                isMediaConnected = false,
+                isReconnecting = false,
             )
         }
         viewModelScope.launch {
-            NovaWebRtcEngineRegistry.engine?.answerCurrentCall()
+            engine?.answerCurrentCall()
         }
         if (syncBackend) current.callId?.let { callId ->
             viewModelScope.launch {
                 backendRuntime.answerCall(callId)
             }
         }
-        startDurationTicker()
+        val media = engine?.state?.value
+        when {
+            // No media engine (e.g. preview/demo): treat the call as connected right away.
+            engine == null -> markMediaConnected()
+            media?.callId == current.callId && media?.connectionState == NovaWebRtcEngine.CONNECTION_CONNECTED -> markMediaConnected()
+            else -> startConnectTimeout(CONNECT_TIMEOUT_MS)
+        }
+    }
+
+    /** Called with every media state update from the WebRTC engine. */
+    fun onMediaStateChanged(media: WebRtcCallState) {
+        val current = _uiState.value
+        if (!current.isActive || current.status != CallStatus.InCall) return
+        if (media.callId.isNullOrBlank() || media.callId != current.callId) return
+        when (media.connectionState) {
+            NovaWebRtcEngine.CONNECTION_CONNECTED -> markMediaConnected()
+            NovaWebRtcEngine.CONNECTION_RECONNECTING -> {
+                if (current.isMediaConnected && !current.isReconnecting) {
+                    _uiState.update { it.copy(isReconnecting = true) }
+                    startConnectTimeout(RECONNECT_TIMEOUT_MS)
+                }
+            }
+            NovaWebRtcEngine.CONNECTION_FAILED -> endCurrentCall(CallEndReason.Dropped, syncBackend = true)
+        }
+    }
+
+    /** The peer sent a WebRTC "bye"; end locally even if the backend event is late or lost. */
+    fun onRemoteHangup(callId: String) {
+        val current = _uiState.value
+        if (current.isActive && current.callId == callId) {
+            val reason = when {
+                // Caller gave up before we answered.
+                current.isRinging && current.direction == CallDirection.Incoming -> CallEndReason.Missed
+                // Callee rejected our call.
+                current.isRinging && current.direction == CallDirection.Outgoing -> CallEndReason.Declined
+                else -> CallEndReason.HungUp
+            }
+            endCurrentCall(reason, syncBackend = false)
+        }
+    }
+
+    private fun markMediaConnected() {
+        cancelConnectTimeout()
+        val wasConnected = _uiState.value.isMediaConnected
+        _uiState.update {
+            it.copy(isMediaConnected = true, isReconnecting = false, lastEventLabel = "Connected")
+        }
+        if (!wasConnected) {
+            startDurationTicker()
+        }
     }
 
     fun minimize(syncBackend: Boolean = true) {
@@ -177,6 +268,9 @@ class CallViewModel(
         if (!current.isActive || !current.isVideoCall || !current.isVideoOn) {
             return
         }
+        if (current.direction == CallDirection.Outgoing && current.callId.isNullOrBlank()) {
+            return
+        }
         viewModelScope.launch {
             NovaWebRtcEngineRegistry.engine?.ensureLocalVideoPreview()
         }
@@ -207,6 +301,7 @@ class CallViewModel(
     suspend fun resetForLogout() {
         cancelDurationTicker()
         cancelRingTimeout()
+        cancelConnectTimeout()
         callGeneration += 1
         NovaWebRtcEngineRegistry.engine?.endCurrentCall(sendBye = false)
         _lastSummary.value = null
@@ -231,6 +326,10 @@ class CallViewModel(
         callId: String? = null,
     ) {
         val current = _uiState.value
+        if (current.isActive && !callId.isNullOrBlank() && current.callId == callId) {
+            _uiState.update { it.copy(isMinimized = false) }
+            return
+        }
         if (
             current.isActive &&
             current.participantName == participantName &&
@@ -281,6 +380,7 @@ class CallViewModel(
                 if (session.callId.isNullOrBlank() || session.threadId.isBlank() || session.peerUserId.isBlank()) {
                     return@launch
                 }
+                refreshIceServers()
                 NovaWebRtcEngineRegistry.engine?.beginIncomingCall(
                     callId = session.callId.orEmpty(),
                     threadId = session.threadId,
@@ -341,6 +441,7 @@ class CallViewModel(
                 val currentUi = _uiState.value
                 val remoteUserId = currentUi.peerUserId.ifBlank { peerUserId }
                 if (remoteUserId.isNotBlank()) {
+                    refreshIceServers()
                     NovaWebRtcEngineRegistry.engine?.beginOutgoingCall(
                         callId = backendCallId,
                         threadId = currentUi.threadId.ifBlank { threadId },
@@ -360,6 +461,7 @@ class CallViewModel(
 
         cancelDurationTicker()
         cancelRingTimeout()
+        cancelConnectTimeout()
         callGeneration += 1
 
         val endedAtMillis = System.currentTimeMillis()
@@ -374,8 +476,8 @@ class CallViewModel(
             endReason = reason,
             startedAtLabel = current.startedAtLabel,
             endedAtLabel = formatTimeLabel(endedAtMillis),
-            isMicOn = current.isMicOn,
-            isVideoOn = current.isVideoOn,
+            isMicOn = false,
+            isVideoOn = false,
         )
         _lastSummary.value = summary
 
@@ -383,6 +485,8 @@ class CallViewModel(
             status = CallStatus.Ended,
             isActive = false,
             isMinimized = false,
+            isMicOn = false,
+            isVideoOn = false,
             lastEventLabel = reason.displayLabel(),
             endReason = reason,
         )
@@ -409,8 +513,11 @@ class CallViewModel(
 
     private fun startRingTimeout() {
         ringTimeoutJob?.cancel()
+        // The callee waits a bit longer than the caller so the caller's NO_ANSWER normally ends
+        // the call; the backend then pushes it to the callee as a missed call.
+        val timeout = if (_uiState.value.direction == CallDirection.Incoming) RING_TIMEOUT_MS + 5_000L else RING_TIMEOUT_MS
         ringTimeoutJob = viewModelScope.launch {
-            delay(RING_TIMEOUT_MS)
+            delay(timeout)
             val current = _uiState.value
             if (!current.isActive || current.status != CallStatus.Ringing) {
                 return@launch
@@ -438,6 +545,36 @@ class CallViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * TURN credentials from the backend are time-limited, so fetch fresh ICE servers right
+     * before each call. On failure the engine keeps the last known configuration.
+     */
+    private suspend fun refreshIceServers() {
+        val config = withTimeoutOrNull(ICE_CONFIG_TIMEOUT_MS) {
+            runCatching { backendRuntime.fetchRealtimeConfig() }.getOrNull()
+        } ?: return
+        NovaWebRtcEngineRegistry.engine?.applyRealtimeConfig(config)
+    }
+
+    private fun startConnectTimeout(timeoutMs: Long) {
+        connectTimeoutJob?.cancel()
+        val callId = _uiState.value.callId
+        connectTimeoutJob = viewModelScope.launch {
+            delay(timeoutMs)
+            val current = _uiState.value
+            if (current.isActive && current.callId == callId &&
+                (!current.isMediaConnected || current.isReconnecting)
+            ) {
+                endCurrentCall(CallEndReason.Dropped, syncBackend = true)
+            }
+        }
+    }
+
+    private fun cancelConnectTimeout() {
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = null
     }
 
     private fun cancelRingTimeout() {
@@ -468,7 +605,20 @@ class CallViewModel(
 
     override fun onCleared() {
         cancelRingTimeout()
+        cancelConnectTimeout()
         cancelDurationTicker()
+        // The UI was destroyed mid-call (e.g. app swiped away): end it for real so the peer and the
+        // backend don't keep a ghost call around.
+        val current = _uiState.value
+        if (current.isActive) {
+            current.callId?.let { callId ->
+                val reason = resolveDefaultEndReason(current)
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    runCatching { backendRuntime.endCall(callId, reason) }
+                }
+            }
+        }
+        NovaWebRtcEngineRegistry.engine?.endCurrentCallInBackground(sendBye = current.isActive)
         super.onCleared()
     }
 }

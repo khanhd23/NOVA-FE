@@ -34,6 +34,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -85,7 +91,21 @@ class NovaWebRtcEngine {
     private var localVideoCaptureStarted: Boolean = false
     private val localRenderers: MutableSet<SurfaceViewRenderer> = linkedSetOf()
     private val remoteRenderers: MutableSet<SurfaceViewRenderer> = linkedSetOf()
-    private var currentState: WebRtcCallState = WebRtcCallState()
+    private val _state = MutableStateFlow(WebRtcCallState())
+
+    /** Media connection state of the current call, observed by the call view model. */
+    val state: StateFlow<WebRtcCallState> = _state.asStateFlow()
+
+    private val _remoteHangups = MutableSharedFlow<String>(extraBufferCapacity = 4)
+
+    /** Emits the call id when the peer sends a "bye" signal. */
+    val remoteHangups: SharedFlow<String> = _remoteHangups.asSharedFlow()
+
+    private var currentState: WebRtcCallState
+        get() = _state.value
+        set(value) {
+            _state.value = value
+        }
     private var pendingSignals: MutableList<BackendRealtimeEvent> = mutableListOf()
     @Volatile
     private var configuredIceServers: List<BackendIceServer> = defaultIceServers
@@ -251,6 +271,12 @@ class NovaWebRtcEngine {
         pendingSignals.clear()
     }
 
+    fun endCurrentCallInBackground(sendBye: Boolean = true) {
+        scope.launch {
+            endCurrentCall(sendBye = sendBye)
+        }
+    }
+
     suspend fun setMicEnabled(enabled: Boolean) = lock.withLock {
         localAudioTrack?.setEnabled(enabled)
     }
@@ -332,16 +358,21 @@ class NovaWebRtcEngine {
             override fun onSignalingChange(newState: PeerConnection.SignalingState) = Unit
 
             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-                currentState = currentState.copy(connectionState = newState.name.lowercase(Locale.ROOT))
                 when (newState) {
                     PeerConnection.IceConnectionState.CONNECTED,
                     PeerConnection.IceConnectionState.COMPLETED -> {
                         cancelIceRestart()
-                        currentState = currentState.copy(errorMessage = null)
+                        currentState = currentState.copy(connectionState = CONNECTION_CONNECTED, errorMessage = null)
                     }
                     PeerConnection.IceConnectionState.DISCONNECTED,
                     PeerConnection.IceConnectionState.FAILED -> scheduleIceRestart(newState.name.lowercase(Locale.ROOT))
-                    else -> Unit
+                    PeerConnection.IceConnectionState.CLOSED -> Unit
+                    else -> {
+                        // NEW / CHECKING: keep "reconnecting" if we were already connected once.
+                        if (currentState.connectionState != CONNECTION_RECONNECTING) {
+                            currentState = currentState.copy(connectionState = newState.name.lowercase(Locale.ROOT))
+                        }
+                    }
                 }
             }
 
@@ -545,10 +576,7 @@ class NovaWebRtcEngine {
                 val sdp = event.payload["sdp"].orEmpty()
                 val remote = SessionDescription(SessionDescription.Type.ANSWER, sdp)
                 connection.setRemoteDescription(SimpleSdpObserver(), remote)
-                currentState = currentState.copy(
-                    connectionState = "connected",
-                    remoteDescriptionReady = true,
-                )
+                currentState = currentState.copy(remoteDescriptionReady = true)
                 drainPendingSignals()
             }
             "candidate" -> {
@@ -564,8 +592,12 @@ class NovaWebRtcEngine {
                 connection.addIceCandidate(candidate)
             }
             "bye" -> {
+                val endedCallId = currentState.callId.orEmpty()
                 scope.launch {
                     endCurrentCall(sendBye = false)
+                    if (endedCallId.isNotBlank()) {
+                        _remoteHangups.tryEmit(endedCallId)
+                    }
                 }
             }
         }
@@ -616,6 +648,9 @@ class NovaWebRtcEngine {
 
     private fun releasePeerConnection() {
         cancelIceRestart()
+        localAudioTrack?.setEnabled(false)
+        localVideoTrack?.setEnabled(false)
+        stopLocalVideoCapture()
         try {
             peerConnection?.close()
         } catch (_: Throwable) {
@@ -710,7 +745,7 @@ class NovaWebRtcEngine {
         }
         if (iceRestartAttempts >= maxIceRestartAttempts) {
             currentState = currentState.copy(
-                connectionState = "failed",
+                connectionState = CONNECTION_FAILED,
                 errorMessage = "Call connection unstable",
             )
             return
@@ -719,7 +754,7 @@ class NovaWebRtcEngine {
         iceRestartAttempts += 1
         val delayMs = iceRestartBackoffMs * iceRestartAttempts
         currentState = currentState.copy(
-            connectionState = "reconnecting",
+            connectionState = CONNECTION_RECONNECTING,
             errorMessage = "Reconnecting ($reason)",
         )
 
@@ -744,13 +779,11 @@ class NovaWebRtcEngine {
                         sdpMLineIndex = null,
                     )
                 }.onSuccess {
-                    currentState = currentState.copy(
-                        connectionState = "connecting",
-                        errorMessage = null,
-                    )
+                    // Stay in "reconnecting" until ICE reports connected again.
+                    currentState = currentState.copy(errorMessage = null)
                 }.onFailure { throwable ->
                     currentState = currentState.copy(
-                        connectionState = "failed",
+                        connectionState = CONNECTION_FAILED,
                         errorMessage = throwable.message ?: "Failed to restart call",
                     )
                 }
@@ -773,6 +806,9 @@ class NovaWebRtcEngine {
 
     companion object {
         private const val TAG = "NovaWebRtc"
+        const val CONNECTION_CONNECTED = "connected"
+        const val CONNECTION_RECONNECTING = "reconnecting"
+        const val CONNECTION_FAILED = "failed"
         private const val LOCAL_VIDEO_WIDTH = 1280
         private const val LOCAL_VIDEO_HEIGHT = 720
         private const val LOCAL_VIDEO_FPS = 30

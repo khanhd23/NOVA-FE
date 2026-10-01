@@ -9,6 +9,8 @@ const val ACTION_OPEN_PROFILE = "com.nova.app.action.OPEN_PROFILE"
 const val ACTION_OPEN_NOTIFICATION_TARGET = "com.nova.app.action.OPEN_NOTIFICATION_TARGET"
 const val ACTION_ANSWER_CALL = "com.nova.app.action.ANSWER_CALL"
 const val ACTION_DECLINE_CALL = "com.nova.app.action.DECLINE_CALL"
+const val ACTION_HANG_UP_CALL = "com.nova.app.action.HANG_UP_CALL"
+const val ACTION_CALL_BACK = "com.nova.app.action.CALL_BACK"
 
 const val EXTRA_THREAD_ID = "extra_thread_id"
 const val EXTRA_CALL_ID = "extra_call_id"

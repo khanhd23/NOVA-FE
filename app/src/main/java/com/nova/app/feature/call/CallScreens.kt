@@ -1,5 +1,12 @@
 package com.nova.app.feature.call
 
+import com.nova.app.core.designsystem.NovaColors
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+import com.nova.app.core.i18n.localizedCallEvent
+import com.nova.app.core.i18n.localizedLabel
+
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
@@ -75,11 +82,16 @@ import com.nova.app.ui.theme.NOVATheme
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
 import org.webrtc.SurfaceViewRenderer
+import com.nova.app.core.call.CallAudioRoute
+import com.nova.app.core.call.CallAudioState
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import kotlin.math.roundToInt
 
 @Composable
 fun VoiceCallScreen(
     uiState: CallSessionUiState,
+    audioState: CallAudioState = CallAudioState(),
+    onToggleAudioRoute: () -> Unit = {},
     onBack: () -> Unit,
     onAnswerCall: () -> Unit,
     onEndCall: () -> Unit,
@@ -93,13 +105,15 @@ fun VoiceCallScreen(
         uiState = uiState,
         selfAvatarUrl = "",
         accentColor = PurpleMain,
-        subtitle = "Voice call",
+        subtitle = stringResource(R.string.call_voice),
         onBack = onBack,
         onAnswerCall = onAnswerCall,
         onEndCall = onEndCall,
         onToggleMic = onToggleMic,
         onToggleVideo = null,
         onSwitchCamera = {},
+        audioState = audioState,
+        onToggleAudioRoute = onToggleAudioRoute,
         modifier = modifier,
     )
 }
@@ -107,6 +121,9 @@ fun VoiceCallScreen(
 @Composable
 fun VideoCallScreen(
     uiState: CallSessionUiState,
+    audioState: CallAudioState = CallAudioState(),
+    isPictureInPicture: Boolean = false,
+    onToggleAudioRoute: () -> Unit = {},
     selfAvatarUrl: String = "",
     onBack: () -> Unit,
     onAnswerCall: () -> Unit,
@@ -120,7 +137,7 @@ fun VideoCallScreen(
     BackHandler(onBack = onBack)
     val hasCallPermissions = rememberCallPermissionsGranted(isVideoCall = true)
 
-    LaunchedEffect(hasCallPermissions, uiState.isActive, uiState.isVideoCall, uiState.isVideoOn) {
+    LaunchedEffect(hasCallPermissions, uiState.isActive, uiState.isVideoCall, uiState.isVideoOn, uiState.callId) {
         if (hasCallPermissions && uiState.isActive && uiState.isVideoCall && uiState.isVideoOn) {
             onEnsureVideoPreview()
         }
@@ -130,13 +147,16 @@ fun VideoCallScreen(
         uiState = uiState,
         selfAvatarUrl = selfAvatarUrl,
         accentColor = PurplePink,
-        subtitle = "Video call",
+        subtitle = stringResource(R.string.call_video),
         onBack = onBack,
         onAnswerCall = onAnswerCall,
         onEndCall = onEndCall,
         onToggleMic = onToggleMic,
         onToggleVideo = onToggleVideo,
         onSwitchCamera = onSwitchCamera,
+        audioState = audioState,
+        onToggleAudioRoute = onToggleAudioRoute,
+        isPictureInPicture = isPictureInPicture,
         modifier = modifier,
     )
 }
@@ -168,7 +188,7 @@ fun CallSummaryScreen(
             modifier = Modifier.fillMaxSize(),
         ) {
             NovaTopBar(
-                title = "Call ended",
+                title = stringResource(R.string.call_ended),
                 subtitle = summary.participantName,
                 onBack = onBack,
             )
@@ -186,13 +206,13 @@ fun CallSummaryScreen(
                         .size(112.dp)
                         .clip(CircleShape)
                         .background(
-                            if (summary.durationSeconds > 0) PurpleMain.copy(alpha = 0.18f) else Color(0xFFFF5A6A).copy(
+                            if (summary.durationSeconds > 0) PurpleMain.copy(alpha = 0.18f) else NovaColors.current.danger.copy(
                                 alpha = 0.18f
                             )
                         )
                         .border(
                             1.dp,
-                            if (summary.durationSeconds > 0) PurpleMain.copy(alpha = 0.28f) else Color(0xFFFF5A6A).copy(
+                            if (summary.durationSeconds > 0) PurpleMain.copy(alpha = 0.28f) else NovaColors.current.danger.copy(
                                 alpha = 0.28f
                             ),
                             CircleShape
@@ -202,7 +222,7 @@ fun CallSummaryScreen(
                     Icon(
                         imageVector = if (summary.callType == CallType.Video) Icons.Default.Videocam else Icons.Default.Call,
                         contentDescription = null,
-                        tint = if (summary.durationSeconds > 0) PurpleMain else Color(0xFFFF5A6A),
+                        tint = if (summary.durationSeconds > 0) PurpleMain else NovaColors.current.danger,
                         modifier = Modifier.size(54.dp),
                     )
                 }
@@ -233,7 +253,7 @@ fun CallSummaryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 NovaButton(
-                    text = "Call again",
+                    text = stringResource(R.string.call_again),
                     onClick = onCallAgain,
                 )
                 OutlinedButton(
@@ -245,7 +265,7 @@ fun CallSummaryScreen(
                         contentColor = Color.White,
                     ),
                 ) {
-                    Text("Message")
+                    Text(stringResource(R.string.call_message))
                 }
             }
         }
@@ -322,10 +342,10 @@ fun FloatingCallWindow(
                 ) {
                     Text(
                         text = when {
-                            uiState.isRinging && uiState.direction == CallDirection.Incoming -> "Incoming"
-                            uiState.isRinging -> "Calling"
-                            uiState.isAnswered -> "Connected"
-                            else -> uiState.status.displayLabel()
+                            uiState.isRinging && uiState.direction == CallDirection.Incoming -> stringResource(R.string.call_incoming)
+                            uiState.isRinging -> stringResource(R.string.call_calling)
+                            uiState.isAnswered -> stringResource(R.string.call_connected)
+                            else -> uiState.status.localizedLabel()
                         },
                         color = Color.White.copy(alpha = 0.82f),
                         fontSize = 11.sp,
@@ -367,7 +387,7 @@ fun FloatingCallWindow(
                     )
                 } else {
                     Text(
-                        text = uiState.lastEventLabel.ifBlank { uiState.status.displayLabel() },
+                        text = uiState.lastEventLabel.takeIf { it.isNotBlank() }?.let { localizedCallEvent(it) } ?: uiState.status.localizedLabel(),
                         color = Color.White.copy(alpha = 0.82f),
                         fontSize = 12.sp,
                         modifier = Modifier
@@ -388,7 +408,7 @@ fun FloatingCallWindow(
                                 .align(Alignment.Center)
                                 .size(48.dp),
                         ) {
-                            Icon(Icons.Default.OpenInFull, contentDescription = "Expand", tint = Color.White)
+                            Icon(Icons.Default.OpenInFull, contentDescription = stringResource(R.string.call_expand), tint = Color.White)
                         }
 
                         Column(
@@ -405,14 +425,14 @@ fun FloatingCallWindow(
                                 ) {
                                     CallControlButton(
                                         icon = Icons.Default.Call,
-                                        backgroundColor = Color(0xFF22C55E),
+                                        backgroundColor = CallAnswerGreen,
                                         onClick = onAnswerCall,
                                         size = 38,
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     CallControlButton(
                                         icon = Icons.Default.CallEnd,
-                                        backgroundColor = Color.Red,
+                                        backgroundColor = CallHangUpRed,
                                         onClick = onEndCall,
                                         size = 38,
                                     )
@@ -424,7 +444,7 @@ fun FloatingCallWindow(
                                 ) {
                                     CallControlButton(
                                         icon = Icons.Default.CallEnd,
-                                        backgroundColor = Color.Red,
+                                        backgroundColor = CallHangUpRed,
                                         onClick = onEndCall,
                                         size = 38,
                                     )
@@ -451,7 +471,7 @@ fun FloatingCallWindow(
                                     }
                                     CallControlButton(
                                         icon = Icons.Default.CallEnd,
-                                        backgroundColor = Color.Red,
+                                        backgroundColor = CallHangUpRed,
                                         onClick = onEndCall,
                                         size = 36,
                                     )
@@ -477,9 +497,20 @@ private fun CallScreen(
     onToggleMic: () -> Unit,
     onToggleVideo: (() -> Unit)?,
     onSwitchCamera: () -> Unit,
+    audioState: CallAudioState,
+    onToggleAudioRoute: () -> Unit,
+    isPictureInPicture: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val isVideo = uiState.isVideoCall
+
+    if (isPictureInPicture && isVideo) {
+        // Floating window outside the app: only the other person's video.
+        Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+            RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+        }
+        return
+    }
     val isAnswered = uiState.isAnswered
 
     val brush = Brush.verticalGradient(
@@ -500,6 +531,8 @@ private fun CallScreen(
             onToggleMic = onToggleMic,
             onToggleVideo = onToggleVideo,
             onSwitchCamera = onSwitchCamera,
+            audioState = audioState,
+            onToggleAudioRoute = onToggleAudioRoute,
             modifier = modifier,
         )
     } else {
@@ -510,7 +543,7 @@ private fun CallScreen(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 NovaTopBar(
-                    title = uiState.participantName.ifBlank { "Call" },
+                    title = uiState.participantName.ifBlank { stringResource(R.string.call_default_name) },
                     subtitle = buildSubtitle(uiState, subtitle),
                     onBack = onBack,
                 )
@@ -538,6 +571,8 @@ private fun CallScreen(
                     onToggleMic = onToggleMic,
                     onToggleVideo = onToggleVideo,
                     onSwitchCamera = onSwitchCamera,
+                    audioState = audioState,
+                    onToggleAudioRoute = onToggleAudioRoute,
                 )
             }
 
@@ -562,6 +597,8 @@ private fun ConnectedVideoCallStage(
     onToggleMic: () -> Unit,
     onToggleVideo: (() -> Unit)?,
     onSwitchCamera: () -> Unit,
+    audioState: CallAudioState,
+    onToggleAudioRoute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
@@ -580,11 +617,11 @@ private fun ConnectedVideoCallStage(
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.35f)),
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back), tint = Color.White)
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = formatDuration(uiState.durationSeconds),
+                text = callProgressText(uiState),
                 color = Color.White,
                 fontSize = 13.sp,
                 modifier = Modifier
@@ -621,6 +658,8 @@ private fun ConnectedVideoCallStage(
                 onToggleMic = onToggleMic,
                 onToggleVideo = onToggleVideo,
                 onSwitchCamera = onSwitchCamera,
+                audioState = audioState,
+                onToggleAudioRoute = onToggleAudioRoute,
             )
         }
     }
@@ -684,7 +723,7 @@ private fun DraggableLocalPreview(
                     if (selfAvatarUrl.isNotBlank()) {
                         AsyncImage(
                             model = selfAvatarUrl,
-                            contentDescription = "Your avatar",
+                            contentDescription = stringResource(R.string.call_your_avatar),
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -721,7 +760,7 @@ private fun DraggableLocalPreview(
                     ) {
                         Icon(
                             imageVector = Icons.Default.VideocamOff,
-                            contentDescription = "Camera off",
+                            contentDescription = stringResource(R.string.call_camera_off),
                             tint = Color.White,
                             modifier = Modifier.size(18.dp),
                         )
@@ -779,19 +818,19 @@ private fun CallCenterStage(
 
         Text(
             text = when {
-                uiState.isRinging && uiState.direction == CallDirection.Incoming -> "Incoming call"
-                uiState.isRinging -> "Calling..."
-                uiState.isAnswered -> "Connected"
-                else -> uiState.status.displayLabel()
+                uiState.isRinging && uiState.direction == CallDirection.Incoming -> stringResource(R.string.call_incoming_call)
+                uiState.isRinging -> stringResource(R.string.call_calling_ellipsis)
+                uiState.isAnswered -> callProgressText(uiState)
+                else -> uiState.status.localizedLabel()
             },
-            color = accentColor,
+            color = if (uiState.isReconnecting) NovaColors.current.warning else accentColor,
             fontSize = 16.sp,
         )
 
         if (!uiState.isAnswered) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = uiState.direction.displayLabel(),
+                text = uiState.direction.localizedLabel(),
                 color = Color.White.copy(alpha = 0.72f),
                 fontSize = 13.sp,
             )
@@ -846,7 +885,7 @@ private fun VideoCallBackdrop(
                 .padding(18.dp)
         ) {
             Text(
-                text = if (uiState.isAnswered) "Live video" else if (uiState.direction == CallDirection.Incoming) "Incoming video call" else "Calling...",
+                text = if (uiState.isAnswered) stringResource(R.string.call_live_video) else if (uiState.direction == CallDirection.Incoming) stringResource(R.string.call_incoming_video) else stringResource(R.string.call_calling_ellipsis),
                 color = Color.White,
                 fontSize = 13.sp,
                 modifier = Modifier
@@ -863,7 +902,7 @@ private fun VideoCallBackdrop(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (uiState.direction == CallDirection.Incoming) "Swipe or tap to answer" else "Connecting your camera",
+                    text = if (uiState.direction == CallDirection.Incoming) stringResource(R.string.call_swipe_to_answer) else stringResource(R.string.call_waiting_answer),
                     color = Color.White.copy(alpha = 0.72f),
                     fontSize = 13.sp,
                 )
@@ -875,20 +914,48 @@ private fun VideoCallBackdrop(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .size(156.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                    .clip(CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = Icons.Default.Videocam,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(72.dp),
+                CallParticipantAvatar(
+                    name = uiState.participantName,
+                    accentColor = accentColor,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
 
+    }
+}
+
+@Composable
+private fun CallParticipantAvatar(
+    name: String,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        accentColor.copy(alpha = 0.78f),
+                        PurplePink.copy(alpha = 0.58f),
+                        Color(0xFF171923),
+                    )
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = initial,
+            color = Color.White,
+            fontSize = 56.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -900,6 +967,8 @@ private fun CallActions(
     onToggleMic: () -> Unit,
     onToggleVideo: (() -> Unit)?,
     onSwitchCamera: () -> Unit,
+    audioState: CallAudioState,
+    onToggleAudioRoute: () -> Unit,
 ) {
     val toggleVideo = onToggleVideo ?: {}
 
@@ -918,13 +987,13 @@ private fun CallActions(
                 ) {
                     CallControlButton(
                         icon = Icons.Default.Call,
-                        backgroundColor = Color(0xFF22C55E),
+                        backgroundColor = CallAnswerGreen,
                         onClick = onAnswerCall,
                         size = 64,
                     )
                     CallControlButton(
                         icon = Icons.Default.CallEnd,
-                        backgroundColor = Color.Red,
+                        backgroundColor = CallHangUpRed,
                         onClick = onEndCall,
                         size = 64,
                     )
@@ -937,9 +1006,11 @@ private fun CallActions(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    AudioRouteButton(audioState = audioState, onClick = onToggleAudioRoute)
                     CallControlButton(
                         icon = if (uiState.isMicOn) Icons.Default.Mic else Icons.Default.MicOff,
-                        backgroundColor = Color.White.copy(alpha = 0.12f),
+                        backgroundColor = if (uiState.isMicOn) Color.White.copy(alpha = 0.12f) else Color.White,
+                        iconTint = if (uiState.isMicOn) Color.White else Color.Black,
                         onClick = onToggleMic,
                     )
                     CallControlButton(
@@ -954,7 +1025,7 @@ private fun CallActions(
                     )
                     CallControlButton(
                         icon = Icons.Default.CallEnd,
-                        backgroundColor = Color.Red,
+                        backgroundColor = CallHangUpRed,
                         onClick = onEndCall,
                     )
                 }
@@ -966,14 +1037,16 @@ private fun CallActions(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    AudioRouteButton(audioState = audioState, onClick = onToggleAudioRoute)
                     CallControlButton(
                         icon = if (uiState.isMicOn) Icons.Default.Mic else Icons.Default.MicOff,
-                        backgroundColor = Color.White.copy(alpha = 0.12f),
+                        backgroundColor = if (uiState.isMicOn) Color.White.copy(alpha = 0.12f) else Color.White,
+                        iconTint = if (uiState.isMicOn) Color.White else Color.Black,
                         onClick = onToggleMic,
                     )
                     CallControlButton(
                         icon = Icons.Default.CallEnd,
-                        backgroundColor = Color.Red,
+                        backgroundColor = CallHangUpRed,
                         onClick = onEndCall,
                     )
                 }
@@ -989,6 +1062,8 @@ fun CallControlButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Int = 56,
+    iconTint: Color = Color.White,
+    contentDescription: String? = null,
 ) {
     IconButton(
         onClick = onClick,
@@ -997,8 +1072,35 @@ fun CallControlButton(
             .clip(CircleShape)
             .background(backgroundColor),
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White)
+        Icon(icon, contentDescription = contentDescription, tint = iconTint)
     }
+}
+
+/** Messenger-style audio button: highlighted when audio leaves the earpiece; tap to cycle outputs. */
+@Composable
+private fun AudioRouteButton(audioState: CallAudioState, onClick: () -> Unit) {
+    val highlighted = audioState.route != CallAudioRoute.Earpiece
+    val (icon, label) = when (audioState.route) {
+        CallAudioRoute.Earpiece -> Icons.AutoMirrored.Filled.VolumeUp to stringResource(R.string.call_audio_earpiece)
+        CallAudioRoute.Speaker -> Icons.AutoMirrored.Filled.VolumeUp to stringResource(R.string.call_audio_speaker)
+        CallAudioRoute.Headset -> Icons.Default.Headset to stringResource(R.string.call_audio_headset)
+        CallAudioRoute.Bluetooth -> Icons.Default.BluetoothAudio to stringResource(R.string.call_audio_bluetooth)
+    }
+    CallControlButton(
+        icon = icon,
+        backgroundColor = if (highlighted) Color.White else Color.White.copy(alpha = 0.12f),
+        iconTint = if (highlighted) Color.Black else Color.White,
+        contentDescription = label,
+        onClick = onClick,
+    )
+}
+
+/** Timer once media flows; otherwise "Connecting…" / "Reconnecting…". */
+@Composable
+private fun callProgressText(uiState: CallSessionUiState): String = when {
+    uiState.isReconnecting -> stringResource(R.string.call_reconnecting)
+    !uiState.isMediaConnected -> stringResource(R.string.call_connecting)
+    else -> formatDuration(uiState.durationSeconds)
 }
 
 @Composable
@@ -1082,37 +1184,40 @@ private fun LocalVideoSurface(modifier: Modifier = Modifier) {
     WebRtcSurface(modifier = modifier, mirror = true)
 }
 
+@Composable
 private fun summaryStatusText(summary: CallSummaryUiState): String {
     return when {
-        summary.durationSeconds > 0 -> "Connected • ${formatDuration(summary.durationSeconds)}"
-        summary.endReason == CallEndReason.Missed -> "Missed call"
-        summary.endReason == CallEndReason.NoAnswer -> "No answer"
-        summary.endReason == CallEndReason.Declined -> "Declined call"
-        summary.endReason == CallEndReason.Rejected -> "Rejected call"
-        summary.endReason == CallEndReason.Busy -> "Busy"
-        summary.endReason == CallEndReason.Canceled -> "Canceled call"
-        summary.endReason == CallEndReason.Dropped -> "Call dropped"
-        else -> "Call ended"
+        summary.durationSeconds > 0 -> "${stringResource(R.string.call_connected)} • ${formatDuration(summary.durationSeconds)}"
+        summary.endReason == CallEndReason.Missed -> stringResource(R.string.call_missed)
+        summary.endReason == CallEndReason.NoAnswer -> stringResource(R.string.call_no_answer)
+        summary.endReason == CallEndReason.Declined -> stringResource(R.string.call_declined)
+        summary.endReason == CallEndReason.Rejected -> stringResource(R.string.call_rejected)
+        summary.endReason == CallEndReason.Busy -> stringResource(R.string.call_busy)
+        summary.endReason == CallEndReason.Canceled -> stringResource(R.string.call_canceled)
+        summary.endReason == CallEndReason.Dropped -> stringResource(R.string.call_dropped)
+        else -> stringResource(R.string.call_ended)
     }
 }
 
+@Composable
 private fun summaryStatusColor(summary: CallSummaryUiState): Color {
     return if (summary.durationSeconds > 0) {
         if (summary.callType == CallType.Video) PurplePink else PurpleMain
     } else {
-        Color(0xFFFF5A6A)
+        NovaColors.current.danger
     }
 }
 
+@Composable
 private fun buildSubtitle(
     uiState: CallSessionUiState,
     fallback: String,
 ): String {
     return when {
-        uiState.isRinging && uiState.direction == CallDirection.Incoming -> "Incoming call"
-        uiState.isRinging -> "Calling"
-        uiState.isAnswered -> "Live"
-        uiState.isEnded -> uiState.endReason?.displayLabel() ?: "Ended"
+        uiState.isRinging && uiState.direction == CallDirection.Incoming -> stringResource(R.string.call_incoming_call)
+        uiState.isRinging -> stringResource(R.string.call_calling)
+        uiState.isAnswered -> callProgressText(uiState)
+        uiState.isEnded -> uiState.endReason?.localizedLabel() ?: stringResource(R.string.call_status_ended)
         else -> fallback
     }
 }
@@ -1201,7 +1306,7 @@ fun CallSummaryScreenPreview() {
 @Composable
 fun FloatingCallWindowPreview() {
     NOVATheme {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Gray)) {
+        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             FloatingCallWindow(
                 uiState = CallSessionUiState(
                     participantName = "Alex Johnson",
@@ -1227,3 +1332,7 @@ fun FloatingCallWindowPreview() {
 }
 
 
+
+// Call screens are always dark: fixed colors that keep white icons readable.
+private val CallAnswerGreen = Color(0xFF16A34A)
+private val CallHangUpRed = Color(0xFFDC2626)
