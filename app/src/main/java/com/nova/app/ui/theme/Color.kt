@@ -1,12 +1,26 @@
 package com.nova.app.ui.theme
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
+import com.nova.app.core.designsystem.NovaBrand
+import com.nova.app.core.designsystem.NovaColors
 import com.nova.app.core.designsystem.NovaPalette
 
-// Primary Gradient (Constant for both themes)
-val PurpleMain = NovaPalette.Purple50
-val PurpleMedium = NovaPalette.Purple60
-val PurplePink = NovaPalette.Purple70
+// Accent for text, icons and tints: adapts to light/dark so it stays readable.
+// For backgrounds that carry white content use NovaBrand instead.
+val PurpleMain: Color
+    @Composable
+    @ReadOnlyComposable
+    get() = NovaColors.current.accent
+
+val PurplePink: Color
+    @Composable
+    @ReadOnlyComposable
+    get() = NovaColors.current.accentPink
+
+// Middle stop of the brand gradient.
+val PurpleMedium = NovaBrand.Mid
 
 // Accent & Functional
 val AccentPink = NovaPalette.AccentPink

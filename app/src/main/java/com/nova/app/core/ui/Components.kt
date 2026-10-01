@@ -1,5 +1,10 @@
 package com.nova.app.core.ui
 
+import com.nova.app.core.designsystem.NovaBrand
+
+import androidx.compose.ui.res.stringResource
+import com.nova.app.R
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,11 +34,18 @@ fun NovaButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     icon: ImageVector? = null,
-    containerColor: Color? = null
+    containerColor: Color? = null,
+    contentColor: Color? = null
 ) {
     val gradient = Brush.linearGradient(
-        colors = listOf(PurpleMain, PurpleMedium, PurplePink)
+        colors = NovaBrand.gradient3
     )
+    val resolvedContentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+        contentColor != null -> contentColor
+        containerColor != null -> MaterialTheme.colorScheme.onSurface
+        else -> Color.White
+    }
     
     Button(
         onClick = onClick,
@@ -44,23 +56,28 @@ fun NovaButton(
             .then(
                 if (containerColor != null) Modifier.background(containerColor)
                 else if (enabled) Modifier.background(gradient)
-                else Modifier.background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                else Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
             ),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            contentColor = resolvedContentColor,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
         contentPadding = PaddingValues(0.dp),
         enabled = enabled,
         shape = CircleShape
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground)
+                Icon(icon, contentDescription = null, tint = resolvedContentColor)
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = resolvedContentColor
                 )
             )
         }
@@ -159,6 +176,7 @@ fun NovaTopBar(
     title: String,
     subtitle: String? = null,
     onBack: (() -> Unit)? = null,
+    onTitleClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Row(
@@ -176,12 +194,16 @@ fun NovaTopBar(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back), tint = MaterialTheme.colorScheme.onBackground)
             }
             Spacer(modifier = Modifier.width(16.dp))
         }
         
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier)
+        ) {
             Text(
                 text = title, 
                 style = MaterialTheme.typography.titleLarge, 
@@ -205,18 +227,38 @@ fun NovaTopBar(
 }
 
 @Composable
+fun NovaTopLoadingBar(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(3.dp)
+    ) {
+        if (visible) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxSize(),
+                color = PurpleMain,
+                trackColor = Color.Transparent,
+            )
+        }
+    }
+}
+
+@Composable
 fun NovaBadge(count: Int, modifier: Modifier = Modifier) {
     if (count > 0) {
         Box(
             modifier = modifier
                 .size(16.dp)
                 .clip(CircleShape)
-                .background(Color.Red),
+                .background(MaterialTheme.colorScheme.error),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = if (count > 99) "99+" else count.toString(),
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onError,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -233,8 +275,8 @@ fun NovaChip(
     selected: Boolean = false,
     onClick: () -> Unit = {}
 ) {
-    val backgroundColor = if (selected) PurpleMain else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
-    val borderColor = if (selected) PurpleMain else MaterialTheme.colorScheme.outline
+    val backgroundColor = if (selected) NovaBrand.Start else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+    val borderColor = if (selected) NovaBrand.Start else MaterialTheme.colorScheme.outline
     
     Box(
         modifier = Modifier
@@ -247,8 +289,10 @@ fun NovaChip(
     ) {
         Text(
             text = text,
+            maxLines = 1,
+            softWrap = false,
             style = MaterialTheme.typography.bodyMedium.copy(
-                color = if (selected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
             )
         )
     }
@@ -256,8 +300,18 @@ fun NovaChip(
 
 fun formatCount(count: Int): String {
     return when {
-        count >= 1000000 -> String.format("%.1fM", count / 1000000f)
-        count >= 1000 -> String.format("%.1fk", count / 1000f)
+        count >= 1_000_000 -> compactCount(count, 1_000_000, "M")
+        count >= 1_000 -> compactCount(count, 1_000, "k")
         else -> count.toString()
+    }
+}
+
+private fun compactCount(count: Int, unit: Int, suffix: String): String {
+    val major = count / unit
+    val decimal = (count % unit) / (unit / 10)
+    return if (decimal == 0 || major >= 10) {
+        "$major$suffix"
+    } else {
+        "$major.$decimal$suffix"
     }
 }

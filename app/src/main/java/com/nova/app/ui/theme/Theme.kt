@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.nova.app.core.designsystem.NovaPalette
 import com.nova.app.core.designsystem.NovaTheme as CoreNovaTheme
 
 @Composable
@@ -20,6 +21,8 @@ fun NOVATheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
+            val windowBackground = if (darkTheme) NovaPalette.Background else NovaPalette.LightBackground
+            window.decorView.setBackgroundColor(windowBackground.toArgb())
             window.statusBarColor = Color.Transparent.toArgb()
             window.navigationBarColor = Color.Transparent.toArgb()
             WindowCompat.setDecorFitsSystemWindows(window, false)
