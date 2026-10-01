@@ -79,7 +79,7 @@ Yêu cầu: Android Studio, JDK 17, thiết bị Android 7.0 trở lên.
 
 ```bash
 # Lấy cả mã backend
-git clone --recurse-submodules https://github.com/dangkimkhanh/NOVA.git
+git clone --recurse-submodules https://github.com/khanhd23/NOVA.git
 cd NOVA
 
 # Backend
@@ -90,4 +90,4 @@ cd backend
 ./gradlew -PbackendBaseUrl=http://10.0.2.2:8080 :app:installDebug
 ```
 
-Cần thêm tệp `app/google-services.json` từ dự án Firebase của bạn. Backend nằm ở repo riêng [NOVA-BE](https://github.com/dangkimkhanh/NOVA-BE), được gắn vào thư mục `backend/` dưới dạng submodule.
+Cần thêm tệp `app/google-services.json` từ dự án Firebase của bạn. Backend nằm ở repo riêng [NOVA-BE](https://github.com/khanhd23/NOVA-BE), được gắn vào thư mục `backend/` dưới dạng submodule.
