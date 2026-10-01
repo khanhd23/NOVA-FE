@@ -405,4 +405,8 @@
     <string name="notif_channel_ongoing_calls">Cuộc gọi đang diễn ra</string>
     <string name="notif_channel_missed_calls">Cuộc gọi nhỡ</string>
     <string name="session_expired">Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.</string>
+    <string name="chat_delete">Xóa</string>
+    <string name="chat_delete_title">Xóa cuộc trò chuyện?</string>
+    <string name="chat_delete_message">Các tin nhắn tính đến hiện tại sẽ chỉ bị xóa ở phía bạn. %1$s vẫn thấy toàn bộ cuộc trò chuyện.</string>
+    <string name="chat_delete_failed">Không thể xóa cuộc trò chuyện. Vui lòng thử lại.</string>
 </resources>

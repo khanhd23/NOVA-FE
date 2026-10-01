@@ -70,6 +70,7 @@ fun HomeShell(
     onChatClick: (com.nova.app.core.model.ChatThread) -> Unit,
     onSearchClick: () -> Unit,
     onChatTabSeen: () -> Unit = {},
+    onDeleteThread: (com.nova.app.core.model.ChatThread) -> Unit = {},
     onCommunitySearchClick: () -> Unit = onSearchClick,
     onNotificationClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -137,7 +138,7 @@ fun HomeShell(
                     selectedTab = 1
                 }
             )
-            3 -> ChatListScreen(messagesState = messagesState, onSearchClick = onSearchClick, onChatClick = onChatClick)
+            3 -> ChatListScreen(messagesState = messagesState, onSearchClick = onSearchClick, onChatClick = onChatClick, onDeleteThread = onDeleteThread)
             4 -> AccountScreen(
                 profileState = profileState,
                 onSettingsClick = onSettingsClick,

@@ -405,4 +405,8 @@
     <string name="notif_channel_ongoing_calls">진행 중인 통화</string>
     <string name="notif_channel_missed_calls">부재중 전화</string>
     <string name="session_expired">세션이 만료되었습니다. 다시 로그인해 주세요.</string>
+    <string name="chat_delete">삭제</string>
+    <string name="chat_delete_title">대화를 삭제할까요?</string>
+    <string name="chat_delete_message">지금까지의 메시지는 내 쪽에서만 삭제됩니다. %1$s님은 대화를 그대로 볼 수 있어요.</string>
+    <string name="chat_delete_failed">대화를 삭제할 수 없습니다. 다시 시도해 주세요.</string>
 </resources>

@@ -214,6 +214,10 @@ class MessagesViewModel(
     fun markVisibleThreadsSeen() = viewModelScope.launch {
         repository.markVisibleChatThreadsSeen()
     }
+
+    fun deleteThreadForMe(threadId: String, onResult: (Boolean) -> Unit = {}) = viewModelScope.launch {
+        onResult(repository.deleteThreadForMe(threadId))
+    }
 }
 
 class ChatViewModel(

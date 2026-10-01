@@ -405,4 +405,8 @@
     <string name="notif_channel_ongoing_calls">进行中的通话</string>
     <string name="notif_channel_missed_calls">未接来电</string>
     <string name="session_expired">登录已过期，请重新登录。</string>
+    <string name="chat_delete">删除</string>
+    <string name="chat_delete_title">删除对话？</string>
+    <string name="chat_delete_message">到目前为止的消息只会在你这边删除，%1$s 仍能看到完整对话。</string>
+    <string name="chat_delete_failed">无法删除对话，请重试。</string>
 </resources>

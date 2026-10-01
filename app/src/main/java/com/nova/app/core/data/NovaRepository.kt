@@ -97,6 +97,9 @@ interface NovaRepository {
     suspend fun retryMessage(messageId: String)
     suspend fun setChatTyping(typing: Boolean)
     suspend fun deleteCurrentThreadForMe()
+
+    /** Hides the conversation history for the current user only; the other side keeps it. */
+    suspend fun deleteThreadForMe(threadId: String): Boolean
     suspend fun deleteMessageForMe(messageId: String)
     suspend fun recallMessage(messageId: String)
     suspend fun editMessage(messageId: String, text: String)
@@ -612,8 +615,11 @@ class DefaultNovaRepository : NovaRepository {
     }
 
     override suspend fun deleteCurrentThreadForMe() {
-        val runtime = BackendRuntimeRegistry.runtime ?: return
-        val threadId = chatState.value.thread.id
+        deleteThreadForMe(chatState.value.thread.id)
+    }
+
+    override suspend fun deleteThreadForMe(threadId: String): Boolean {
+        val runtime = BackendRuntimeRegistry.runtime ?: return false
         val deleted = runCatching { runtime.deleteThreadForMe(threadId) }.getOrDefault(false)
         if (deleted) {
             messagesState.update { state ->
@@ -627,6 +633,7 @@ class DefaultNovaRepository : NovaRepository {
                 }
             }
         }
+        return deleted
     }
 
     override suspend fun deleteMessageForMe(messageId: String) {

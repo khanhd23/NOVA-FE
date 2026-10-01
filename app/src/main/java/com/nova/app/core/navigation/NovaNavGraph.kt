@@ -194,6 +194,14 @@ fun NovaNavHost(
         }
     }
 
+    fun deleteThreadForMe(thread: ChatThread) {
+        messagesViewModel.deleteThreadForMe(thread.id) { deleted ->
+            if (!deleted) {
+                android.widget.Toast.makeText(context, context.getString(R.string.chat_delete_failed), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     fun openDiscoverChat(candidate: com.nova.app.core.model.DiscoveryCandidate) {
         val user = candidate.user
         openChatThread(
@@ -488,6 +496,7 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ChatSearch)
                     },
                     onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onDeleteThread = ::deleteThreadForMe,
                     onCommunitySearchClick = {
                         navController.navigateTo(AppRoute.CommunitySearch)
                     },
@@ -527,6 +536,7 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ChatSearch)
                     },
                     onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onDeleteThread = ::deleteThreadForMe,
                     onCommunitySearchClick = {
                         navController.navigateTo(AppRoute.CommunitySearch)
                     },
@@ -567,6 +577,7 @@ fun NovaNavHost(
                         navController.navigateTo(AppRoute.ChatSearch)
                     },
                     onChatTabSeen = messagesViewModel::markVisibleThreadsSeen,
+                    onDeleteThread = ::deleteThreadForMe,
                     onCommunitySearchClick = {
                         navController.navigateTo(AppRoute.CommunitySearch)
                     },

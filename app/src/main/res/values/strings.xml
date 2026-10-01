@@ -406,4 +406,8 @@
     <string name="notif_channel_ongoing_calls">Ongoing calls</string>
     <string name="notif_channel_missed_calls">Missed calls</string>
     <string name="session_expired">Your session has expired. Please sign in again.</string>
+    <string name="chat_delete">Delete</string>
+    <string name="chat_delete_title">Delete conversation?</string>
+    <string name="chat_delete_message">Messages up to now will be removed for you only. %1$s will still see the whole conversation.</string>
+    <string name="chat_delete_failed">Could not delete the conversation. Please try again.</string>
 </resources>

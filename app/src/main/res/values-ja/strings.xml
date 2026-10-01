@@ -405,4 +405,8 @@
     <string name="notif_channel_ongoing_calls">通話中</string>
     <string name="notif_channel_missed_calls">不在着信</string>
     <string name="session_expired">セッションの有効期限が切れました。もう一度サインインしてください。</string>
+    <string name="chat_delete">削除</string>
+    <string name="chat_delete_title">会話を削除しますか？</string>
+    <string name="chat_delete_message">これまでのメッセージはあなたの画面からのみ削除されます。%1$s には会話がそのまま残ります。</string>
+    <string name="chat_delete_failed">会話を削除できませんでした。もう一度お試しください。</string>
 </resources>
