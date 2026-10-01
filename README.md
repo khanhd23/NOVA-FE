@@ -79,8 +79,8 @@ Yêu cầu: Android Studio, JDK 17, thiết bị Android 7.0 trở lên.
 
 ```bash
 # Lấy cả mã backend
-git clone --recurse-submodules https://github.com/khanhd23/NOVA.git
-cd NOVA
+git clone --recurse-submodules https://github.com/khanhd23/NOVA-FE.git
+cd NOVA-FE
 
 # Backend
 cd backend
