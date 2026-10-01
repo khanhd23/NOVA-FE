@@ -22,3 +22,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# IDE assistant state
+/.idea/planningMode.xml
