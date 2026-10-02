@@ -6,7 +6,7 @@
 
 | Đăng nhập | Khám phá | Trò chuyện | Cuộc gọi video | Hồ sơ |
 |---|---|---|---|---|
-| ![](docs/screenshots/login.png) | ![](docs/screenshots/discover.png) | ![](docs/screenshots/chat.png) | ![](docs/screenshots/call.png) | ![](docs/screenshots/profile.png) |
+| ![](docs/screenshots/login.jpg) | ![](docs/screenshots/discover.jpg) | ![](docs/screenshots/chat.jpg) | ![](docs/screenshots/call.jpg) | ![](docs/screenshots/profile.jpg) |
 
 ## Tính năng
 
@@ -69,25 +69,24 @@ app/src/main/java/com/nova/app/
 │   ├── webrtc/         WebRTC engine
 │   └── ui/             Thành phần giao diện dùng chung
 └── feature/            auth, discover, chat, call, community, post, profile, settings...
-
-backend/                API Spring Boot (submodule: NOVA-BE)
 ```
 
 ## Chạy dự án
 
 Yêu cầu: Android Studio, JDK 17, thiết bị Android 7.0 trở lên.
 
-```bash
-# Lấy cả mã backend
-git clone --recurse-submodules https://github.com/khanhd23/NOVA-FE.git
-cd NOVA-FE
+Backend nằm ở repo riêng: [NOVA-BE](https://github.com/khanhd23/NOVA-BE).
 
+```bash
 # Backend
-cd backend
+git clone https://github.com/khanhd23/NOVA-BE.git
+cd NOVA-BE
 ./gradlew bootRun
 
 # Ứng dụng (trỏ tới backend trên máy, dùng từ máy ảo)
+git clone https://github.com/khanhd23/NOVA-FE.git
+cd NOVA-FE
 ./gradlew -PbackendBaseUrl=http://10.0.2.2:8080 :app:installDebug
 ```
 
-Cần thêm tệp `app/google-services.json` từ dự án Firebase của bạn. Backend nằm ở repo riêng [NOVA-BE](https://github.com/khanhd23/NOVA-BE), được gắn vào thư mục `backend/` dưới dạng submodule.
+Cần thêm tệp `app/google-services.json` từ dự án Firebase của bạn.

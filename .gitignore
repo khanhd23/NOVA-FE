@@ -29,3 +29,6 @@ local.properties
 
 # Built APKs
 *.apk
+
+# Backend lives in its own repository (NOVA-BE), cloned here locally
+/backend/
