@@ -181,8 +181,12 @@ class CallViewModel(
     /** Called with every media state update from the WebRTC engine. */
     fun onMediaStateChanged(media: WebRtcCallState) {
         val current = _uiState.value
-        if (!current.isActive || current.status != CallStatus.InCall) return
+        if (!current.isActive) return
         if (media.callId.isNullOrBlank() || media.callId != current.callId) return
+        if (current.isRemoteVideoOn != media.remoteVideoEnabled) {
+            _uiState.update { it.copy(isRemoteVideoOn = media.remoteVideoEnabled) }
+        }
+        if (current.status != CallStatus.InCall) return
         when (media.connectionState) {
             NovaWebRtcEngine.CONNECTION_CONNECTED -> markMediaConnected()
             NovaWebRtcEngine.CONNECTION_RECONNECTING -> {

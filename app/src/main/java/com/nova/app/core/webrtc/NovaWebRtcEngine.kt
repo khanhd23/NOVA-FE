@@ -1,7 +1,6 @@
 package com.nova.app.core.webrtc
 
 import android.content.Context
-import android.graphics.PixelFormat
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -15,12 +14,10 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RendererCommon
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
-import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
@@ -59,6 +56,7 @@ data class WebRtcCallState(
     val connectionState: String = "idle",
     val localPreviewReady: Boolean = false,
     val remoteVideoReady: Boolean = false,
+    val remoteVideoEnabled: Boolean = false,
     val errorMessage: String? = null,
 )
 
@@ -89,8 +87,8 @@ class NovaWebRtcEngine {
     private var remoteVideoTrack: VideoTrack? = null
     private var videoCapturer: VideoCapturer? = null
     private var localVideoCaptureStarted: Boolean = false
-    private val localRenderers: MutableSet<SurfaceViewRenderer> = linkedSetOf()
-    private val remoteRenderers: MutableSet<SurfaceViewRenderer> = linkedSetOf()
+    private val localRenderers: MutableSet<TextureViewRenderer> = linkedSetOf()
+    private val remoteRenderers: MutableSet<TextureViewRenderer> = linkedSetOf()
     private val _state = MutableStateFlow(WebRtcCallState())
 
     /** Media connection state of the current call, observed by the call view model. */
@@ -160,42 +158,32 @@ class NovaWebRtcEngine {
         iceRestartBackoffMs = (config?.restartBackoffMs ?: 1000L).coerceAtLeast(250L)
     }
 
-    fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
+    fun attachLocalRenderer(renderer: TextureViewRenderer) {
         val egl = eglBase?.eglBaseContext ?: return
-        renderer.holder.setFormat(PixelFormat.TRANSLUCENT)
-        renderer.init(egl, null)
-        renderer.setEnableHardwareScaler(true)
-        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        renderer.init(egl)
         renderer.setMirror(true)
-        renderer.setZOrderOnTop(true)
-        renderer.setZOrderMediaOverlay(true)
         localRenderers.add(renderer)
         localVideoTrack?.addSink(renderer)
         Log.d(TAG, "Local renderer attached. renderers=${localRenderers.size}, hasTrack=${localVideoTrack != null}")
     }
 
-    fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
+    fun attachRemoteRenderer(renderer: TextureViewRenderer) {
         val egl = eglBase?.eglBaseContext ?: return
-        renderer.holder.setFormat(PixelFormat.OPAQUE)
-        renderer.init(egl, null)
-        renderer.setEnableHardwareScaler(true)
-        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        renderer.init(egl)
         renderer.setMirror(false)
-        renderer.setZOrderOnTop(false)
-        renderer.setZOrderMediaOverlay(false)
         remoteRenderers.add(renderer)
         remoteVideoTrack?.addSink(renderer)
         currentState = currentState.copy(remoteVideoReady = remoteVideoTrack != null)
         Log.d(TAG, "Remote renderer attached. renderers=${remoteRenderers.size}, hasTrack=${remoteVideoTrack != null}")
     }
 
-    fun detachLocalRenderer(renderer: SurfaceViewRenderer) {
+    fun detachLocalRenderer(renderer: TextureViewRenderer) {
         localVideoTrack?.removeSink(renderer)
         localRenderers.remove(renderer)
         Log.d(TAG, "Local renderer detached. renderers=${localRenderers.size}")
     }
 
-    fun detachRemoteRenderer(renderer: SurfaceViewRenderer) {
+    fun detachRemoteRenderer(renderer: TextureViewRenderer) {
         remoteVideoTrack?.removeSink(renderer)
         remoteRenderers.remove(renderer)
         Log.d(TAG, "Remote renderer detached. renderers=${remoteRenderers.size}")
@@ -297,6 +285,15 @@ class NovaWebRtcEngine {
             stopLocalVideoCapture()
             currentState = currentState.copy(localPreviewReady = false)
         }
+        sendSignal(
+            signalType = "video_state",
+            sdpType = null,
+            sdp = null,
+            candidate = null,
+            sdpMid = null,
+            sdpMLineIndex = null,
+            video = enabled,
+        )
     }
 
     suspend fun ensureLocalVideoPreview() = lock.withLock {
@@ -405,7 +402,7 @@ class NovaWebRtcEngine {
                     remoteRenderers.forEach { renderer ->
                         track.addSink(renderer)
                     }
-                    currentState = currentState.copy(remoteVideoReady = true)
+                    currentState = currentState.copy(remoteVideoReady = true, remoteVideoEnabled = true)
                 }
             }
 
@@ -424,7 +421,7 @@ class NovaWebRtcEngine {
                     remoteRenderers.forEach { renderer ->
                         track.addSink(renderer)
                     }
-                    currentState = currentState.copy(remoteVideoReady = true)
+                    currentState = currentState.copy(remoteVideoReady = true, remoteVideoEnabled = true)
                 }
             }
         }) ?: return
@@ -591,6 +588,11 @@ class NovaWebRtcEngine {
                 )
                 connection.addIceCandidate(candidate)
             }
+            "video_state" -> {
+                currentState = currentState.copy(
+                    remoteVideoEnabled = event.payload["video"]?.toBooleanStrictOrNull() ?: true,
+                )
+            }
             "bye" -> {
                 val endedCallId = currentState.callId.orEmpty()
                 scope.launch {
@@ -610,6 +612,7 @@ class NovaWebRtcEngine {
         candidate: String?,
         sdpMid: String?,
         sdpMLineIndex: Int?,
+        video: Boolean = currentState.callType == CallType.Video,
     ) {
         val signal = BackendCallSignal(
             targetUserId = currentState.peerUserId,
@@ -621,7 +624,7 @@ class NovaWebRtcEngine {
             candidate = candidate,
             sdpMid = sdpMid,
             sdpMLineIndex = sdpMLineIndex,
-            video = currentState.callType == CallType.Video,
+            video = video,
         )
         backendRuntime?.sendCallSignal(signal)
     }

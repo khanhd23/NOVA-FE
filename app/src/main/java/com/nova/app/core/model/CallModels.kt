@@ -48,6 +48,8 @@ data class CallSessionUiState(
     val startedAtLabel: String = "",
     val lastEventLabel: String = "",
     val endReason: CallEndReason? = null,
+    /** Whether the remote participant is currently publishing camera video. */
+    val isRemoteVideoOn: Boolean = false,
     /** True once audio/video actually flows (ICE connected), not just when the call was accepted. */
     val isMediaConnected: Boolean = false,
     /** Media was connected but the network dropped; WebRTC is trying to recover. */

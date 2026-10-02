@@ -18,6 +18,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,6 +65,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -81,7 +85,7 @@ import com.nova.app.core.ui.NovaTopBar
 import com.nova.app.ui.theme.NOVATheme
 import com.nova.app.ui.theme.PurpleMain
 import com.nova.app.ui.theme.PurplePink
-import org.webrtc.SurfaceViewRenderer
+import com.nova.app.core.webrtc.TextureViewRenderer
 import com.nova.app.core.call.CallAudioRoute
 import com.nova.app.core.call.CallAudioState
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -282,201 +286,142 @@ fun FloatingCallWindow(
     onToggleVideo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showControls by remember { mutableStateOf(false) }
+    val cardWidth = 168.dp
+    val stageHeight = 200.dp
+    val controlsHeight = 56.dp
+    val cardHeight = stageHeight + controlsHeight
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidthPx = with(density) { 180.dp.toPx() }
-        val cardHeightPx = with(density) { 240.dp.toPx() }
-        val marginPx = with(density) { 24.dp.toPx() }
-        val maxWidthPx = with(density) { maxWidth.toPx() }
-        val maxHeightPx = with(density) { maxHeight.toPx() }
-        val maxOffsetX = (maxWidthPx - cardWidthPx - marginPx).coerceAtLeast(marginPx)
-        val maxOffsetY = (maxHeightPx - cardHeightPx - marginPx).coerceAtLeast(marginPx)
+        val cardWidthPx = with(density) { cardWidth.toPx() }
+        val cardHeightPx = with(density) { cardHeight.toPx() }
+        val marginPx = with(density) { 16.dp.toPx() }
+        val maxOffsetX = (with(density) { maxWidth.toPx() } - cardWidthPx - marginPx).coerceAtLeast(marginPx)
+        val maxOffsetY = (with(density) { maxHeight.toPx() } - cardHeightPx - marginPx).coerceAtLeast(marginPx)
 
-        var offsetX by remember(maxWidth, maxHeight) {
-            mutableFloatStateOf(maxOffsetX)
+        var offsetX by remember(maxWidth, maxHeight) { mutableFloatStateOf(maxOffsetX) }
+        val topBarBottomPx = with(density) {
+            WindowInsets.statusBars.getTop(this).toFloat() + TOP_BAR_HEIGHT.toPx()
         }
         var offsetY by remember(maxWidth, maxHeight) {
-            mutableFloatStateOf(maxOffsetY * 0.55f)
+            mutableFloatStateOf(topBarBottomPx.coerceIn(marginPx, maxOffsetY))
         }
 
         Card(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .size(width = 180.dp, height = 240.dp)
-                .pointerInput(uiState.participantName, uiState.callType) {
+                .size(width = cardWidth, height = cardHeight)
+                .pointerInput(uiState.callId) {
                     detectDragGestures { change, dragAmount ->
+                        change.consume()
                         offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, maxOffsetX)
                         offsetY = (offsetY + dragAmount.y).coerceIn(marginPx, maxOffsetY)
                     }
-                }
-                .clickable { showControls = !showControls },
+                },
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF12131A)),
             elevation = CardDefaults.cardElevation(defaultElevation = 14.dp),
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (uiState.isVideoCall && uiState.isAnswered) {
-                    RemoteVideoSurface(
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Stage: video or avatar. Tap to return to the full call screen.
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    if (uiState.isVideoCall) PurplePink.copy(alpha = 0.6f) else PurpleMain.copy(alpha = 0.6f),
-                                    Color.Black.copy(alpha = 0.7f),
-                                )
-                            )
-                        ),
-                )
-
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp),
+                        .fillMaxWidth()
+                        .height(stageHeight)
+                        .clickable(onClick = onExpand),
                 ) {
-                    Text(
-                        text = when {
-                            uiState.isRinging && uiState.direction == CallDirection.Incoming -> stringResource(R.string.call_incoming)
-                            uiState.isRinging -> stringResource(R.string.call_calling)
-                            uiState.isAnswered -> stringResource(R.string.call_connected)
-                            else -> uiState.status.localizedLabel()
-                        },
-                        color = Color.White.copy(alpha = 0.82f),
-                        fontSize = 11.sp,
-                    )
-                    Text(
-                        text = uiState.participantName,
-                        color = Color.White,
-                        fontSize = 14.sp,
-                    )
-                }
+                    if (uiState.isVideoCall && uiState.isAnswered && uiState.isRemoteVideoOn) {
+                        RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF1A1B24)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CallParticipantAvatar(
+                                name = uiState.participantName,
+                                accentColor = if (uiState.isVideoCall) PurplePink else PurpleMain,
+                                modifier = Modifier.size(72.dp),
+                            )
+                        }
+                    }
 
-                if (!uiState.isVideoCall || !uiState.isAnswered) {
-                    Box(
+                    // Top bar: status/timer on the left, expand on the right.
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.1f))
-                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape),
-                        contentAlignment = Alignment.Center,
+                            .fillMaxWidth()
+                            .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
+                            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            imageVector = if (uiState.isVideoCall) Icons.Default.Videocam else Icons.Default.Person,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.88f),
-                            modifier = Modifier.size(38.dp),
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when {
+                                    uiState.isRinging && uiState.direction == CallDirection.Incoming -> stringResource(R.string.call_incoming)
+                                    uiState.isRinging -> stringResource(R.string.call_calling_ellipsis)
+                                    uiState.isAnswered -> callProgressText(uiState)
+                                    else -> uiState.status.localizedLabel()
+                                },
+                                color = if (uiState.isReconnecting) Color(0xFFFFB020) else Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = uiState.participantName,
+                                color = Color.White.copy(alpha = 0.8f),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        IconButton(onClick = onExpand, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Default.OpenInFull,
+                                contentDescription = stringResource(R.string.call_expand),
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
                 }
 
-                if (uiState.isAnswered) {
-                    Text(
-                        text = formatDuration(uiState.durationSeconds),
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 12.dp, bottom = 52.dp),
-                    )
-                } else {
-                    Text(
-                        text = uiState.lastEventLabel.takeIf { it.isNotBlank() }?.let { localizedCallEvent(it) } ?: uiState.status.localizedLabel(),
-                        color = Color.White.copy(alpha = 0.82f),
-                        fontSize = 12.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 12.dp, bottom = 52.dp),
-                    )
-                }
-
-                if (showControls) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.55f)),
-                    ) {
-                        IconButton(
-                            onClick = onExpand,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(48.dp),
-                        ) {
-                            Icon(Icons.Default.OpenInFull, contentDescription = stringResource(R.string.call_expand), tint = Color.White)
+                // Control bar below the stage, so buttons never cover the video or the timer.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(controlsHeight)
+                        .background(Color(0xFF0B0C11)),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    when {
+                        uiState.isRinging && uiState.direction == CallDirection.Incoming -> {
+                            CallControlButton(icon = Icons.Default.Call, backgroundColor = CallAnswerGreen, onClick = onAnswerCall, size = 38)
+                            CallControlButton(icon = Icons.Default.CallEnd, backgroundColor = CallHangUpRed, onClick = onEndCall, size = 38)
                         }
-
-                        Column(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            if (uiState.isRinging && uiState.direction == CallDirection.Incoming) {
-                                Row(
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CallControlButton(
-                                        icon = Icons.Default.Call,
-                                        backgroundColor = CallAnswerGreen,
-                                        onClick = onAnswerCall,
-                                        size = 38,
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    CallControlButton(
-                                        icon = Icons.Default.CallEnd,
-                                        backgroundColor = CallHangUpRed,
-                                        onClick = onEndCall,
-                                        size = 38,
-                                    )
-                                }
-                            } else if (uiState.isRinging) {
-                                Row(
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CallControlButton(
-                                        icon = Icons.Default.CallEnd,
-                                        backgroundColor = CallHangUpRed,
-                                        onClick = onEndCall,
-                                        size = 38,
-                                    )
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CallControlButton(
-                                        icon = if (uiState.isMicOn) Icons.Default.Mic else Icons.Default.MicOff,
-                                        backgroundColor = Color.White.copy(alpha = 0.12f),
-                                        onClick = onToggleMic,
-                                        size = 36,
-                                    )
-                                    if (uiState.isVideoCall) {
-                                        CallControlButton(
-                                            icon = if (uiState.isVideoOn) Icons.Default.Videocam else Icons.Default.VideocamOff,
-                                            backgroundColor = Color.White.copy(alpha = 0.12f),
-                                            onClick = onToggleVideo,
-                                            size = 36,
-                                        )
-                                    }
-                                    CallControlButton(
-                                        icon = Icons.Default.CallEnd,
-                                        backgroundColor = CallHangUpRed,
-                                        onClick = onEndCall,
-                                        size = 36,
-                                    )
-                                }
+                        uiState.isRinging -> {
+                            CallControlButton(icon = Icons.Default.CallEnd, backgroundColor = CallHangUpRed, onClick = onEndCall, size = 38)
+                        }
+                        else -> {
+                            CallControlButton(
+                                icon = if (uiState.isMicOn) Icons.Default.Mic else Icons.Default.MicOff,
+                                backgroundColor = if (uiState.isMicOn) Color.White.copy(alpha = 0.12f) else Color.White,
+                                iconTint = if (uiState.isMicOn) Color.White else Color.Black,
+                                onClick = onToggleMic,
+                                size = 36,
+                            )
+                            if (uiState.isVideoCall) {
+                                CallControlButton(
+                                    icon = if (uiState.isVideoOn) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                                    backgroundColor = if (uiState.isVideoOn) Color.White.copy(alpha = 0.12f) else Color.White,
+                                    iconTint = if (uiState.isVideoOn) Color.White else Color.Black,
+                                    onClick = onToggleVideo,
+                                    size = 36,
+                                )
                             }
+                            CallControlButton(icon = Icons.Default.CallEnd, backgroundColor = CallHangUpRed, onClick = onEndCall, size = 36)
                         }
                     }
                 }
@@ -507,7 +452,11 @@ private fun CallScreen(
     if (isPictureInPicture && isVideo) {
         // Floating window outside the app: only the other person's video.
         Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
-            RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+            if (uiState.isRemoteVideoOn) {
+                RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+            } else {
+                RemoteVideoOffStage(uiState.participantName, PurplePink)
+            }
         }
         return
     }
@@ -602,7 +551,13 @@ private fun ConnectedVideoCallStage(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+        // Without this the last received frame stays frozen after the other person turns
+        // their camera off.
+        if (uiState.isRemoteVideoOn) {
+            RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+        } else {
+            RemoteVideoOffStage(uiState.participantName, PurplePink)
+        }
 
         Row(
             modifier = Modifier
@@ -860,9 +815,11 @@ private fun VideoCallBackdrop(
             .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(32.dp)),
     ) {
         if (uiState.isVideoCall && uiState.isAnswered) {
-            RemoteVideoSurface(
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (uiState.isRemoteVideoOn) {
+                RemoteVideoSurface(modifier = Modifier.fillMaxSize())
+            } else {
+                RemoteVideoOffStage(uiState.participantName, accentColor)
+            }
         }
         Box(
             modifier = Modifier
@@ -956,6 +913,39 @@ private fun CallParticipantAvatar(
             fontSize = 56.sp,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+private fun RemoteVideoOffStage(
+    participantName: String,
+    accentColor: Color,
+    avatarSize: Dp = 156.dp,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(accentColor.copy(alpha = 0.42f), Color(0xFF090A0E)),
+                )
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CallParticipantAvatar(
+                name = participantName,
+                accentColor = accentColor,
+                modifier = Modifier.size(avatarSize),
+            )
+            Spacer(modifier = Modifier.height(avatarSize / 8))
+            Icon(
+                imageVector = Icons.Default.VideocamOff,
+                contentDescription = stringResource(R.string.call_camera_off),
+                tint = Color.White.copy(alpha = 0.84f),
+                modifier = Modifier.size(28.dp),
+            )
+        }
     }
 }
 
@@ -1143,11 +1133,12 @@ private fun WebRtcSurface(
     modifier: Modifier = Modifier,
     mirror: Boolean,
 ) {
-    val rendererRef = remember { arrayOfNulls<SurfaceViewRenderer>(1) }
+    // TextureView-based so Modifier.clip (rounded preview card) actually crops the video.
+    val rendererRef = remember { arrayOfNulls<TextureViewRenderer>(1) }
 
     AndroidView(
         factory = { context ->
-            SurfaceViewRenderer(context).also { renderer ->
+            TextureViewRenderer(context).also { renderer ->
                 rendererRef[0] = renderer
                 if (mirror) {
                     NovaWebRtcEngineRegistry.engine?.attachLocalRenderer(renderer)
@@ -1336,3 +1327,6 @@ fun FloatingCallWindowPreview() {
 // Call screens are always dark: fixed colors that keep white icons readable.
 private val CallAnswerGreen = Color(0xFF16A34A)
 private val CallHangUpRed = Color(0xFFDC2626)
+
+/** Height of the screen top bars (NovaTopBar / call header) below the status bar. */
+private val TOP_BAR_HEIGHT = 76.dp
