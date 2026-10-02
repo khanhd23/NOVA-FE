@@ -581,6 +581,22 @@ class NovaBackendClient(
         }
     }
 
+    suspend fun logout(accessToken: String) {
+        withContext(Dispatchers.IO) {
+            requestJson(method = "POST", path = "/api/v1/auth/logout", accessToken = accessToken)
+        }
+    }
+
+    suspend fun unregisterPushToken(accessToken: String, token: String) {
+        withContext(Dispatchers.IO) {
+            requestJson(
+                method = "DELETE",
+                path = "/api/v1/push/tokens/${URLEncoder.encode(token, StandardCharsets.UTF_8.name())}",
+                accessToken = accessToken,
+            )
+        }
+    }
+
     suspend fun registerPushToken(accessToken: String, requestModel: BackendDeviceTokenRequest) {
         withContext(Dispatchers.IO) {
             val payload = JSONObject()

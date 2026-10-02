@@ -1,5 +1,8 @@
 package com.nova.app.core.backend
 
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.withTimeoutOrNull
+
 import android.content.Context
 import android.net.Uri
 import android.util.Log
@@ -39,6 +42,9 @@ interface BackendRuntime {
     fun initialize(context: Context)
     suspend fun signIn(provider: BackendAuthProvider, providerToken: String? = null): BackendSession
     fun signOut()
+
+    /** Tells the backend: stop pushing to this device and end the session. Then signs out locally. */
+    suspend fun logout()
     suspend fun fetchMe(): BackendProfile?
     suspend fun fetchPublicProfile(userId: String): BackendProfile?
     suspend fun fetchProfileRelations(userId: String, relation: String, page: Int = 0, size: Int = 50): BackendProfilePage?
@@ -153,6 +159,20 @@ class DefaultBackendRuntime(
         reconnect(session)
         syncPushToken(session)
         return session
+    }
+
+    override suspend fun logout() {
+        val session = _session.value
+        val context = appContext
+        if (session != null && context != null) {
+            withTimeoutOrNull(LOGOUT_TIMEOUT_MS) {
+                BackendSessionStore.loadPushToken(context)?.let { token ->
+                    runCatching { client.unregisterPushToken(session.accessToken, token) }
+                }
+                runCatching { client.logout(session.accessToken) }
+            }
+        }
+        signOut()
     }
 
     override fun signOut() {
@@ -669,7 +689,22 @@ class DefaultBackendRuntime(
 
     private fun syncPushToken(session: BackendSession) {
         val context = appContext ?: return
+        // onNewToken only fires when Firebase issues a token, so ask for the current one on every
+        // sign-in; otherwise a device that never got a fresh token is never registered.
+        runCatching {
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                if (!token.isNullOrBlank() && token != BackendSessionStore.loadPushToken(context)) {
+                    BackendSessionStore.savePushToken(context, token)
+                    _session.value?.let { registerPushToken(it, token) }
+                }
+            }
+        }.onFailure { Log.w("NovaBackend", "Unable to read FCM token: ${it.message}") }
         val pushToken = BackendSessionStore.loadPushToken(context) ?: return
+        registerPushToken(session, pushToken)
+    }
+
+    private fun registerPushToken(session: BackendSession, pushToken: String) {
+        val context = appContext ?: return
         scope.launch {
             runCatching {
                 client.registerPushToken(
@@ -778,3 +813,5 @@ class DefaultBackendRuntime(
         }.getOrNull()
     }
 }
+
+private const val LOGOUT_TIMEOUT_MS = 3_000L
