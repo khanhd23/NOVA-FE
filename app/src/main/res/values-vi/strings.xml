@@ -409,4 +409,6 @@
     <string name="chat_delete_title">Xóa cuộc trò chuyện?</string>
     <string name="chat_delete_message">Các tin nhắn tính đến hiện tại sẽ chỉ bị xóa ở phía bạn. %1$s vẫn thấy toàn bộ cuộc trò chuyện.</string>
     <string name="chat_delete_failed">Không thể xóa cuộc trò chuyện. Vui lòng thử lại.</string>
+    <string name="notif_channel_messages">Tin nhắn</string>
+    <string name="chat_delete_conversation">Xóa đoạn chat</string>
 </resources>

@@ -150,6 +150,10 @@ fun NovaApp(launchIntent: Intent? = null) {
         container.backendRuntime.events.collect { event ->
             val currentUserId = container.backendRuntime.currentSession()?.userId
             container.repository.applyRealtimeEvent(event, currentUserId)
+            // Notify from the live socket too, so messages still pop up when FCM is unavailable.
+            if (event.type == BackendRealtimeEventType.MESSAGE_CREATED) {
+                com.nova.app.core.backend.MessageNotifier.showFromRealtime(context, event)
+            }
             handleCallRealtimeEvent(event, currentUserId, callViewModel)
         }
     }

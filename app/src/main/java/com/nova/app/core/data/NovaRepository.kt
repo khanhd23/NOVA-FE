@@ -1,5 +1,7 @@
 package com.nova.app.core.data
 
+import kotlinx.coroutines.launch
+
 import android.net.Uri
 import com.nova.app.core.model.AppSettings
 import com.nova.app.core.model.CallDirection
@@ -117,6 +119,7 @@ interface NovaRepository {
 }
 
 class DefaultNovaRepository : NovaRepository {
+    private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     private val sessionState = MutableStateFlow(SessionState())
     private val settingsState = MutableStateFlow(defaultSettings())
     private val discoverState = MutableStateFlow(defaultDiscoverState())
@@ -800,7 +803,7 @@ class DefaultNovaRepository : NovaRepository {
     }
 
     override suspend fun logout() {
-        runCatching { BackendRuntimeRegistry.runtime?.signOut() }
+        runCatching { BackendRuntimeRegistry.runtime?.logout() }
         sessionState.update { current ->
             current.copy(
                 isFirstLaunch = false,
@@ -1188,9 +1191,12 @@ class DefaultNovaRepository : NovaRepository {
         messagesState.update { state ->
             val existingThread = state.threads.firstOrNull { it.id == threadId }
                 ?: if (chatState.value.thread.id == threadId) chatState.value.thread else null
+            // Only the conversation that is on screen right now counts as read; the last
+            // opened chat stays in chatState after leaving it, so it can't be used here.
+            val viewing = threadId == com.nova.app.core.backend.ActiveChat.threadId
             val nextUnreadCount = when {
                 message.sentByMe -> 0
-                threadId == chatState.value.thread.id -> 0
+                viewing -> 0
                 else -> (existingThread?.unreadCount ?: 0) + 1
             }
             val updatedThread = existingThread?.copy(
@@ -1201,6 +1207,8 @@ class DefaultNovaRepository : NovaRepository {
             val threads = if (updatedThread != null) {
                 listOf(updatedThread) + state.threads.filterNot { it.id == threadId }
             } else {
+                // First message of a conversation we don't have yet: reload the list.
+                repositoryScope.launch { runCatching { refreshMessages() } }
                 state.threads
             }
             state.copy(

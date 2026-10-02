@@ -409,4 +409,6 @@
     <string name="chat_delete_title">删除对话？</string>
     <string name="chat_delete_message">到目前为止的消息只会在你这边删除，%1$s 仍能看到完整对话。</string>
     <string name="chat_delete_failed">无法删除对话，请重试。</string>
+    <string name="notif_channel_messages">消息</string>
+    <string name="chat_delete_conversation">删除对话</string>
 </resources>

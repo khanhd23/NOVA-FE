@@ -92,16 +92,11 @@ fun HomeShell(
 
     var viewerMedia by remember { mutableStateOf<ViewerMediaState?>(null) }
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
-    val messageBadgeCount = if (selectedTab == 3) 0 else messagesState.threads.sumOf { it.unreadCount }
+    // Like Messenger: the badge counts conversations with unread messages, not messages.
+    val messageBadgeCount = messagesState.threads.count { it.unreadCount > 0 }
 
     BackHandler(enabled = viewerMedia != null) {
         viewerMedia = null
-    }
-
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 3) {
-            onChatTabSeen()
-        }
     }
 
     Box(

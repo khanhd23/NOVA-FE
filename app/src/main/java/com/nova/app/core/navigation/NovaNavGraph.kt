@@ -835,6 +835,16 @@ fun NovaNavHost(
                         chatViewModel.openThread(activeThread)
                     }
                 }
+                // While this conversation is on screen its messages are read and not notified.
+                androidx.lifecycle.compose.LifecycleResumeEffect(activeThread.id) {
+                    com.nova.app.core.backend.ActiveChat.threadId = activeThread.id.takeIf { it.isNotBlank() }
+                    com.nova.app.core.backend.MessageNotifier.cancel(context, activeThread.id)
+                    onPauseOrDispose {
+                        if (com.nova.app.core.backend.ActiveChat.threadId == activeThread.id) {
+                            com.nova.app.core.backend.ActiveChat.threadId = null
+                        }
+                    }
+                }
                 val threadId = activeThread.id
                 val peerUserId = activeThread.user.id
                 val participantName = activeThread.user.name

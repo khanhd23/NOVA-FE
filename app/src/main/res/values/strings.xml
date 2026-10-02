@@ -410,4 +410,6 @@
     <string name="chat_delete_title">Delete conversation?</string>
     <string name="chat_delete_message">Messages up to now will be removed for you only. %1$s will still see the whole conversation.</string>
     <string name="chat_delete_failed">Could not delete the conversation. Please try again.</string>
+    <string name="notif_channel_messages">Messages</string>
+    <string name="chat_delete_conversation">Delete conversation</string>
 </resources>

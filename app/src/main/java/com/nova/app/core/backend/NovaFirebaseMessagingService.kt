@@ -48,7 +48,7 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
             // notification is owned by CallForegroundService while the call is alive.
             "CALL_ANSWERED", "CALL_MINIMIZED" -> cancelCallNotification(data)
             "CALL_ENDED" -> showCallEndedNotification(data)
-            "MESSAGE_CREATED" -> showMessageNotification(data)
+            "MESSAGE_CREATED" -> MessageNotifier.showFromPush(applicationContext, data)
             // Every realtime event is also pushed; only new messages deserve a notification.
             // Read, deleted or recalled: clear the stale message notification. Typing: ignore.
             "MESSAGE_RECALLED", "MESSAGE_DELETED", "THREAD_DELETED", "THREAD_READ" -> cancelMessageNotification(data)
@@ -60,7 +60,8 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun showNotificationCreated(data: Map<String, String>) {
         when (data["kind"]?.uppercase(Locale.ROOT)) {
-            "CALL" -> Unit
+            // Messages and calls already have their own events and notifications.
+            "CALL", "MESSAGE" -> Unit
             "FOLLOW", "FRIEND" -> showProfileNotification(data)
             else -> showNotificationTargetNotification(data)
         }
@@ -231,33 +232,6 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
         manager.cancel(chatNotificationId(threadId))
     }
 
-    private fun showMessageNotification(data: Map<String, String>) {
-        val chatPayload = buildChatPayload(data)
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureMessageChannel(manager)
-
-        val openChatIntent = createChatActivityIntent(
-            threadId = chatPayload.threadId,
-            peerUserId = chatPayload.peerUserId,
-            participantName = chatPayload.participantName,
-            messagePreview = chatPayload.messagePreview,
-        )
-        val notification = NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(chatPayload.participantName.ifBlank { "NOVA" })
-            .setContentText(chatPayload.messagePreview.ifBlank { "Open NOVA for details" })
-            .setStyle(NotificationCompat.BigTextStyle().bigText(chatPayload.messagePreview.ifBlank { "Open NOVA for details" }))
-            .setColor(Color.parseColor("#8B5CF6"))
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setAutoCancel(true)
-            .setContentIntent(createActivityPendingIntent(openChatIntent, chatPayload.notificationId, 0))
-            .build()
-
-        manager.notify(chatPayload.notificationId, notification)
-    }
-
     private fun showGenericNotification(data: Map<String, String>) {
         val title = data["title"] ?: getString(R.string.app_name)
         val body = data["body"] ?: "Open NOVA for details"
@@ -376,24 +350,6 @@ class NovaFirebaseMessagingService : FirebaseMessagingService() {
             body = body,
             autoAnswer = false,
             notificationId = callNotificationId(callId.ifBlank { threadId }),
-        )
-    }
-
-    private fun buildChatPayload(data: Map<String, String>): ChatNotificationPayload {
-        val threadId = data["threadId"].orEmpty()
-        val participantName = data["senderName"].orEmpty().ifBlank { data["partnerName"].orEmpty().ifBlank { data["title"].orEmpty() } }
-        val peerUserId = data["actorUserId"].orEmpty()
-        val messagePreview = data["summaryText"].orEmpty().ifBlank {
-            data["body"].orEmpty().ifBlank {
-                data["text"].orEmpty().ifBlank { "Open NOVA for details" }
-            }
-        }
-        return ChatNotificationPayload(
-            threadId = threadId,
-            peerUserId = peerUserId,
-            participantName = participantName,
-            messagePreview = messagePreview,
-            notificationId = chatNotificationId(threadId.ifBlank { participantName.ifBlank { "message" } }),
         )
     }
 

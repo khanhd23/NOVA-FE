@@ -49,6 +49,12 @@ object BackendSessionStore {
         )
     }
 
+    /** Signed-in user id without decrypting tokens (used by notification code). */
+    fun loadUserId(context: Context): String? =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_USER_ID, null)
+            ?.takeIf { it.isNotBlank() }
+
     fun saveSession(context: Context, session: BackendSession) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()

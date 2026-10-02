@@ -409,4 +409,6 @@
     <string name="chat_delete_title">会話を削除しますか？</string>
     <string name="chat_delete_message">これまでのメッセージはあなたの画面からのみ削除されます。%1$s には会話がそのまま残ります。</string>
     <string name="chat_delete_failed">会話を削除できませんでした。もう一度お試しください。</string>
+    <string name="notif_channel_messages">メッセージ</string>
+    <string name="chat_delete_conversation">会話を削除</string>
 </resources>
