@@ -26,3 +26,6 @@ local.properties
 # IDE assistant state
 /.idea/planningMode.xml
 /.vscode/
+
+# Built APKs
+*.apk
