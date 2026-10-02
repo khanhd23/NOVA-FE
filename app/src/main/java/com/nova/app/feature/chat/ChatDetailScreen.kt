@@ -1,5 +1,7 @@
 package com.nova.app.feature.chat
 
+import androidx.compose.ui.text.font.FontWeight
+
 import kotlinx.coroutines.launch
 import com.nova.app.core.designsystem.NovaBrand
 import com.nova.app.core.designsystem.NovaColors
@@ -91,6 +93,7 @@ fun ChatDetailScreen(
     var message by rememberSaveable { mutableStateOf("") }
     var showAttachmentMenu by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var confirmDeleteConversation by remember { mutableStateOf(false) }
     var pendingAttachment by remember { mutableStateOf<ChatAttachmentDraft?>(null) }
     var recordingVoice by remember { mutableStateOf(false) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
@@ -488,6 +491,30 @@ fun ChatDetailScreen(
             ChatSettingsDialog(
                 name = name,
                 onDismiss = { showSettings = false },
+                onDeleteConversation = {
+                    showSettings = false
+                    confirmDeleteConversation = true
+                },
+            )
+        }
+        if (confirmDeleteConversation) {
+            AlertDialog(
+                onDismissRequest = { confirmDeleteConversation = false },
+                title = { Text(stringResource(R.string.chat_delete_title)) },
+                text = { Text(stringResource(R.string.chat_delete_message, name)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmDeleteConversation = false
+                        onDeleteThreadForMe()
+                    }) {
+                        Text(stringResource(R.string.chat_delete), color = NovaColors.current.danger, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDeleteConversation = false }) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                },
             )
         }
         selectedActionMessage?.let { actionMessage ->
@@ -596,6 +623,7 @@ fun ActionIcon(
 fun ChatSettingsDialog(
     name: String,
     onDismiss: () -> Unit,
+    onDeleteConversation: () -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -608,6 +636,12 @@ fun ChatSettingsDialog(
                 ChatSettingItem(Icons.Default.Image, stringResource(R.string.chat_view_media))
                 ChatSettingItem(Icons.Default.Block, stringResource(R.string.chat_block_user), NovaColors.current.danger)
                 ChatSettingItem(Icons.Default.Report, stringResource(R.string.chat_report_user), NovaColors.current.danger)
+                ChatSettingItem(
+                    Icons.Default.Delete,
+                    stringResource(R.string.chat_delete_conversation),
+                    NovaColors.current.danger,
+                    onClick = onDeleteConversation,
+                )
             }
         },
         confirmButton = {
