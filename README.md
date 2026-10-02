@@ -4,9 +4,22 @@
 
 ## Ảnh chụp màn hình
 
-| Đăng nhập | Khám phá | Trò chuyện | Cuộc gọi video | Hồ sơ |
-|---|---|---|---|---|
-| ![](docs/screenshots/login.jpg) | ![](docs/screenshots/discover.jpg) | ![](docs/screenshots/chat.jpg) | ![](docs/screenshots/call.jpg) | ![](docs/screenshots/profile.jpg) |
+<table>
+  <tr>
+    <th>Đăng nhập</th>
+    <th>Khám phá</th>
+    <th>Trò chuyện</th>
+    <th>Cuộc gọi video</th>
+    <th>Hồ sơ</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/login.jpg" width="160" alt="Đăng nhập"></td>
+    <td><img src="docs/screenshots/discover.jpg" width="160" alt="Khám phá"></td>
+    <td><img src="docs/screenshots/chat.jpg" width="160" alt="Trò chuyện"></td>
+    <td><img src="docs/screenshots/call.jpg" width="160" alt="Cuộc gọi video"></td>
+    <td><img src="docs/screenshots/profile.jpg" width="160" alt="Hồ sơ"></td>
+  </tr>
+</table>
 
 ## Tính năng
 
