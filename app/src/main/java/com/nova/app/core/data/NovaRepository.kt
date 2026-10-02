@@ -388,7 +388,15 @@ class DefaultNovaRepository : NovaRepository {
             }
         }
         messagesState.update { state ->
-            val updatedThreads = listOf(backendThread) + state.threads.filterNot { it.id == backendThread.id }
+            // Just opening a conversation must not reorder the list: update it in place.
+            // Only new activity (sending/receiving a message) moves a thread to the top.
+            val updatedThreads = when {
+                state.threads.any { it.id == backendThread.id } ->
+                    state.threads.map { if (it.id == backendThread.id) backendThread else it }
+                // A new conversation joins the list only once it has messages.
+                messages.isNotEmpty() -> listOf(backendThread) + state.threads
+                else -> state.threads
+            }
             state.copy(
                 threads = updatedThreads,
                 onlineNow = updatedThreads.count { it.online },
